@@ -411,7 +411,7 @@
 
 /* Settings / Tool List */
 .dispatch-settings {
-  max-width: 800px;
+  max-width: 100%;
 }
 
 .dispatch-settings-toolbar {

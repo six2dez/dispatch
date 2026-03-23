@@ -25,7 +25,8 @@ export const DEFAULT_PRESETS: ToolConfig[] = [
   {
     id: "preset-dalfox",
     name: "dalfox",
-    command: "dalfox url %U",
+    command:
+      "dalfox url %U --user-agent %G --context-aware --deep-domxss --detailed-analysis",
     group: "XSS",
     showPreview: true,
     enabled: true,
@@ -34,7 +35,8 @@ export const DEFAULT_PRESETS: ToolConfig[] = [
   {
     id: "preset-dalfox-rawdata",
     name: "dalfox (request file)",
-    command: "dalfox file %R --rawdata",
+    command:
+      "dalfox file %R --rawdata --user-agent %G --context-aware --deep-domxss --detailed-analysis",
     group: "XSS",
     showPreview: true,
     enabled: true,
@@ -45,67 +47,59 @@ export const DEFAULT_PRESETS: ToolConfig[] = [
   {
     id: "preset-ffuf",
     name: "ffuf",
-    command: "ffuf -u %S://%H%A/FUZZ -w /usr/share/wordlists/dirb/common.txt",
+    command:
+      "ffuf -mc all -fc 404 -r -c -H \"User-Agent: \"%G -u %S://%H%A/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt",
     group: "Fuzzing",
     showPreview: true,
     enabled: true,
     sortOrder: 4,
-  },
-  {
-    id: "preset-feroxbuster",
-    name: "feroxbuster",
-    command: "feroxbuster -u %S://%H%A -w /usr/share/wordlists/dirb/common.txt",
-    group: "Fuzzing",
-    showPreview: true,
-    enabled: true,
-    sortOrder: 5,
-  },
-  {
-    id: "preset-gobuster",
-    name: "gobuster dir",
-    command: "gobuster dir -u %U -w /usr/share/wordlists/dirb/common.txt",
-    group: "Fuzzing",
-    showPreview: true,
-    enabled: true,
-    sortOrder: 6,
-  },
-  {
-    id: "preset-wfuzz",
-    name: "wfuzz",
-    command: "wfuzz -c -w /usr/share/wordlists/dirb/common.txt --hc 404 %U/FUZZ",
-    group: "Fuzzing",
-    showPreview: true,
-    enabled: true,
-    sortOrder: 7,
-  },
-  {
-    id: "preset-nikto",
-    name: "nikto",
-    command: "nikto -host %U",
-    group: "Fuzzing",
-    showPreview: true,
-    enabled: true,
-    sortOrder: 8,
   },
 
   // Scanning
   {
     id: "preset-nuclei",
     name: "nuclei",
-    command: "nuclei -u %U -severity critical,high,medium",
+    command: "nuclei -u %U -severity info,low,medium,high,critical,unknown",
     group: "Scanning",
     showPreview: true,
     enabled: true,
-    sortOrder: 9,
+    sortOrder: 5,
   },
+  // Crawling
   {
-    id: "preset-nuclei-request",
-    name: "nuclei (request file)",
-    command: "nuclei -r %R",
-    group: "Scanning",
+    id: "preset-katana",
+    name: "katana",
+    command: "katana -u %U -silent",
+    group: "Crawling",
     showPreview: true,
     enabled: true,
-    sortOrder: 10,
+    sortOrder: 6,
+    detectionBinary: "katana",
+  },
+
+  // Parameter Discovery
+  {
+    id: "preset-arjun",
+    name: "arjun",
+    command: "arjun -i %R",
+    group: "Parameter Discovery",
+    showPreview: true,
+    enabled: true,
+    sortOrder: 7,
+    detectionBinary: "arjun",
+  },
+
+  // Recon
+  {
+    id: "preset-subfinder-httpx",
+    name: "subfinder + httpx",
+    command:
+      "subfinder -d %D -silent | httpx -silent -tech-detect -status-code -title",
+    group: "Recon",
+    showPreview: true,
+    enabled: true,
+    sortOrder: 8,
+    detectionBinary: "subfinder",
   },
 
   // SSL
@@ -116,27 +110,28 @@ export const DEFAULT_PRESETS: ToolConfig[] = [
     group: "SSL",
     showPreview: true,
     enabled: true,
-    sortOrder: 11,
+    sortOrder: 9,
   },
   {
     id: "preset-testssl",
     name: "testssl",
-    command: "testssl.sh %H:%P",
+    command: "testssl.sh --color 3 %H:%P",
     group: "SSL",
     showPreview: true,
     enabled: true,
-    sortOrder: 12,
+    sortOrder: 10,
   },
 
   // CMS
   {
     id: "preset-wpscan",
     name: "wpscan",
-    command: "wpscan --url %U --threads 10",
+    command:
+      "wpscan --random-user-agent --rua -e vp,cb,dbe,u --detection-mode aggressive --api-token $WPSCAN_API -v --disable-tls-checks --ignore-main-redirect --url=%U",
     group: "CMS",
     showPreview: true,
     enabled: true,
-    sortOrder: 13,
+    sortOrder: 11,
   },
   {
     id: "preset-droopescan",
@@ -145,27 +140,28 @@ export const DEFAULT_PRESETS: ToolConfig[] = [
     group: "CMS",
     showPreview: true,
     enabled: true,
-    sortOrder: 14,
+    sortOrder: 12,
   },
 
   // Utility
   {
     id: "preset-httpx",
     name: "httpx",
-    command: "echo %U | httpx -silent -tech-detect -status-code",
+    command:
+      "echo %U | httpx -silent -tech-detect -status-code -title -content-length -follow-redirects",
     group: "Utility",
     showPreview: true,
     enabled: true,
-    sortOrder: 15,
+    sortOrder: 13,
     detectionBinary: "httpx",
   },
   {
     id: "preset-curl",
     name: "curl verbose",
-    command: "curl -v -k %U",
+    command: "curl -v -k -L -A %G %U",
     group: "Utility",
     showPreview: true,
     enabled: true,
-    sortOrder: 16,
+    sortOrder: 14,
   },
 ];

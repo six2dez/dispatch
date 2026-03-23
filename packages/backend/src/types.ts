@@ -62,6 +62,8 @@ export interface RequestData {
   headers: string;
   body: string;
   cookies: string;
+  userAgent: string;
+  rootDomain: string;
   rawRequest: string;
 }
 

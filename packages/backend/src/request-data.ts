@@ -5,7 +5,6 @@ export async function extractRequestData(
   sdk: SDK,
   requestId: string
 ): Promise<RequestData> {
-  // Use sdk.requests.get(id) — direct lookup by ID
   const item = await sdk.requests.get(requestId);
   if (!item) throw new Error(`Request ${requestId} not found`);
 
@@ -19,17 +18,20 @@ export async function extractRequestData(
   const tls = request.getTls();
   const body = request.getBody()?.toText() ?? "";
 
-  // Get raw request text
   const rawRequest = request.getRaw().toText();
-
-  // Extract headers from raw request
   const headers = extractHeadersFromRaw(rawRequest);
 
-  // Extract Cookie header — getHeader returns Array<string> | undefined
   const cookieValues = request.getHeader("Cookie");
   const cookies = Array.isArray(cookieValues)
     ? cookieValues.join("; ")
     : "";
+
+  const uaValues = request.getHeader("User-Agent");
+  const userAgent = Array.isArray(uaValues)
+    ? uaValues[0] ?? ""
+    : "";
+
+  const rootDomain = extractRootDomain(host);
 
   return {
     host,
@@ -41,6 +43,8 @@ export async function extractRequestData(
     headers,
     body,
     cookies,
+    userAgent,
+    rootDomain,
     rawRequest,
   };
 }
@@ -51,4 +55,58 @@ function extractHeadersFromRaw(raw: string): string {
   const firstLineEnd = raw.indexOf("\r\n");
   if (firstLineEnd < 0 || firstLineEnd >= headerEnd) return "";
   return raw.substring(firstLineEnd + 2, headerEnd + 2);
+}
+
+// Known multi-part TLDs where the registrable domain is 3+ labels
+const MULTI_PART_TLDS = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "net.uk",
+  "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp",
+  "com.au", "net.au", "org.au", "edu.au",
+  "com.br", "org.br", "net.br",
+  "co.in", "net.in", "org.in", "gen.in",
+  "co.za", "org.za", "web.za",
+  "co.kr", "or.kr", "ne.kr",
+  "co.nz", "net.nz", "org.nz",
+  "com.mx", "org.mx", "net.mx",
+  "com.ar", "org.ar", "net.ar",
+  "com.cn", "net.cn", "org.cn",
+  "com.tw", "org.tw", "net.tw",
+  "com.sg", "org.sg", "net.sg",
+  "com.hk", "org.hk", "net.hk",
+  "co.il", "org.il", "net.il",
+  "com.tr", "org.tr", "net.tr",
+  "com.pl", "org.pl", "net.pl",
+  "co.id", "or.id", "web.id",
+  "com.my", "org.my", "net.my",
+  "com.ph", "org.ph", "net.ph",
+  "com.vn", "org.vn", "net.vn",
+  "co.th", "or.th", "in.th",
+  "com.es", "org.es", "nom.es",
+  "com.pt", "org.pt",
+  "co.ke", "or.ke",
+  "com.ng", "org.ng",
+  "com.eg", "org.eg",
+  "com.pk", "org.pk", "net.pk",
+]);
+
+function extractRootDomain(host: string): string {
+  // IP address or localhost — return as-is
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host === "localhost") {
+    return host;
+  }
+
+  const parts = host.split(".");
+  if (parts.length <= 2) return host;
+
+  // Check for multi-part TLD
+  const lastTwo = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
+  if (MULTI_PART_TLDS.has(lastTwo)) {
+    // root domain is name.multi.tld (3 parts from the end)
+    return parts.length >= 3
+      ? parts.slice(-3).join(".")
+      : host;
+  }
+
+  // Standard TLD: root domain is last 2 parts
+  return parts.slice(-2).join(".");
 }

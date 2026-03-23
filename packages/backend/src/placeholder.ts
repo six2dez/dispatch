@@ -22,7 +22,7 @@ function buildFullUrl(data: RequestData): { scheme: string; fullUrl: string } {
 }
 
 // Single-pass placeholder regex — prevents re-expansion of resolved values
-const PLACEHOLDER_RE = /%[UHPAQMSCREB]/g;
+const PLACEHOLDER_RE = /%[UHPAQMSCREBGD]/g;
 
 export function resolvePlaceholders(
   template: string,
@@ -61,11 +61,13 @@ export function resolvePlaceholders(
     "%U": shellEscape(fullUrl),
     "%H": shellEscape(data.host),
     "%P": String(data.port),
-    "%A": shellEscape(data.path),
+    "%A": shellEscape(data.path.replace(/\/+$/, "")),
     "%Q": shellEscape(data.query),
     "%M": shellEscape(data.method),
     "%S": scheme,
     "%C": shellEscape(data.cookies),
+    "%G": shellEscape(data.userAgent),
+    "%D": shellEscape(data.rootDomain),
   };
   if (rFile) replacements["%R"] = shellEscape(rFile);
   if (eFile) replacements["%E"] = shellEscape(eFile);
@@ -92,6 +94,8 @@ export function buildPlaceholderInfo(
     { key: "%M", value: data.method, used: template.includes("%M") },
     { key: "%S", value: scheme, used: template.includes("%S") },
     { key: "%C", value: data.cookies, used: template.includes("%C") },
+    { key: "%G", value: data.userAgent, used: template.includes("%G") },
+    { key: "%D", value: data.rootDomain, used: template.includes("%D") },
     { key: "%R", value: "<raw request file>", used: template.includes("%R") },
     { key: "%E", value: "<headers file>", used: template.includes("%E") },
     { key: "%B", value: "<body file>", used: template.includes("%B") },

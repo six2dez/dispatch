@@ -7,15 +7,29 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 ## Features
 
 - **Single context menu** — Right-click any request row → "Dispatch..." → pick a tool
-- **17 built-in presets** — sqlmap, dalfox, ffuf, feroxbuster, gobuster, wfuzz, nikto, nuclei, sslscan, testssl, wpscan, droopescan, httpx, curl and more
+- **15 built-in presets** — sqlmap, dalfox, ffuf, nuclei, katana, arjun, subfinder, sslscan, testssl, wpscan, droopescan, httpx, curl and more
 - **Placeholder system** — `%U`, `%H`, `%R`, etc. auto-resolve from the selected request
 - **Preview & edit** — See the resolved command before running, edit flags on the fly
 - **Streaming terminal** — Real-time stdout/stderr output with kill support
 - **Multi-select** — Select multiple requests and run a tool against all of them sequentially
-- **Tool detection** — Auto-detect which tools are installed on your system
+- **Tool detection** — ✓ (green) if installed, ✗ (gray) if not found in PATH; shown in both picker and Settings, refreshable via "Detect Tools" button; tools marked ✗ are still selectable
 - **Custom tools** — Add your own tools with any command template
 - **Import/Export** — Backup and share tool configurations as JSON
 - **History** — Browse past executions with filters by tool name and exit code
+
+## Screenshots
+
+| Tool Picker | Command Preview |
+|---|---|
+| ![Picker](images/picker.png) | ![Preview](images/preview.png) |
+
+| Settings | History |
+|---|---|
+| ![Settings](images/settings.png) | ![History](images/history.png) |
+
+| Help |
+|---|
+| ![Help](images/help.png) |
 
 ## Installation
 
@@ -49,6 +63,8 @@ Use these in command templates. They resolve per-request before execution.
 | `%M` | HTTP method | `POST` |
 | `%S` | Scheme | `https` |
 | `%C` | Cookies (Cookie header value) | `session=abc123; token=xyz` |
+| `%G` | User-Agent header value | `Mozilla/5.0 (Windows NT 10.0; ...)` |
+| `%D` | Root/registrable domain | `example.co.uk` |
 | `%R` | Temp file with full raw request | `/tmp/dispatch-xxx/request.raw` |
 | `%E` | Temp file with request headers | `/tmp/dispatch-xxx/headers.txt` |
 | `%B` | Temp file with request body | `/tmp/dispatch-xxx/body.txt` |
@@ -61,23 +77,29 @@ File placeholders (`%R`, `%E`, `%B`) only create temp files when used. Files are
 |---|---|---|
 | SQL Injection | sqlmap | `sqlmap -u %U --random-agent --batch` |
 | SQL Injection | sqlmap (request file) | `sqlmap -r %R --random-agent --batch` |
-| XSS | dalfox | `dalfox url %U` |
-| XSS | dalfox (request file) | `dalfox file %R --rawdata` |
-| Fuzzing | ffuf | `ffuf -u %S://%H%A/FUZZ -w /usr/share/wordlists/dirb/common.txt` |
-| Fuzzing | feroxbuster | `feroxbuster -u %S://%H%A -w /usr/share/wordlists/dirb/common.txt` |
-| Fuzzing | gobuster dir | `gobuster dir -u %U -w /usr/share/wordlists/dirb/common.txt` |
-| Fuzzing | wfuzz | `wfuzz -c -w /usr/share/wordlists/dirb/common.txt --hc 404 %U/FUZZ` |
-| Fuzzing | nikto | `nikto -host %U` |
-| Scanning | nuclei | `nuclei -u %U -severity critical,high,medium` |
-| Scanning | nuclei (request file) | `nuclei -r %R` |
+| XSS | dalfox | `dalfox url %U --user-agent %G --context-aware --deep-domxss --detailed-analysis` |
+| XSS | dalfox (request file) | `dalfox file %R --rawdata --user-agent %G --context-aware --deep-domxss --detailed-analysis` |
+| Fuzzing | ffuf | `ffuf -mc all -fc 404 -r -c -H "User-Agent: "%G -u %S://%H%A/FUZZ -w <wordlist>` |
+| Scanning | nuclei | `nuclei -u %U -severity info,low,medium,high,critical,unknown` |
+| Crawling | katana | `katana -u %U -silent` |
+| Param Discovery | arjun | `arjun -i %R` |
+| Recon | subfinder + httpx | `subfinder -d %D -silent \| httpx -silent -tech-detect -status-code -title` |
 | SSL | sslscan | `sslscan %H:%P` |
-| SSL | testssl | `testssl.sh %H:%P` |
-| CMS | wpscan | `wpscan --url %U --threads 10` |
+| SSL | testssl | `testssl.sh --color 3 %H:%P` |
+| CMS | wpscan | `wpscan --random-user-agent --rua -e vp,cb,dbe,u --detection-mode aggressive --url=%U` |
 | CMS | droopescan | `droopescan scan drupal -u %U -t 10` |
-| Utility | httpx | `echo %U \| httpx -silent -tech-detect -status-code` |
-| Utility | curl verbose | `curl -v -k %U` |
+| Utility | httpx | `echo %U \| httpx -silent -tech-detect -status-code -title -content-length -follow-redirects` |
+| Utility | curl verbose | `curl -v -k -L -A %G %U` |
 
-Wordlist paths are placeholders — edit them in the preview dialog before running.
+Wordlist paths and API tokens (e.g., `$WPSCAN_API`) are editable in the preview dialog before running.
+
+## Custom Tools & Categories
+
+- Go to **Settings** → **Add Tool** to create your own commands with any placeholder
+- The **Group** field accepts any text — if the category doesn't exist, it's created automatically
+- A category disappears when all its tools are removed or moved to another group
+- To rename a category, edit each tool in it and change the Group field
+- Use **Import/Export** to backup and share your tool configurations as JSON
 
 ## Keyboard Shortcuts
 

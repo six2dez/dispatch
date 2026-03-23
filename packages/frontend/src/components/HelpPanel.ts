@@ -29,6 +29,8 @@ export function createHelpPanel(): HTMLElement {
           <tr><td><code>%M</code></td><td>HTTP method</td><td><code>POST</code></td></tr>
           <tr><td><code>%S</code></td><td>Scheme</td><td><code>https</code></td></tr>
           <tr><td><code>%C</code></td><td>Cookies (value of Cookie header)</td><td><code>session=abc123; token=xyz</code></td></tr>
+          <tr><td><code>%G</code></td><td>User-Agent header value</td><td><code>Mozilla/5.0 (Windows NT 10.0; ...)</code></td></tr>
+          <tr><td><code>%D</code></td><td>Root/registrable domain</td><td><code>example.co.uk</code></td></tr>
           <tr><td><code>%R</code></td><td>Temp file with full raw request</td><td><code>/tmp/dispatch-xxx/request.raw</code></td></tr>
           <tr><td><code>%E</code></td><td>Temp file with request headers</td><td><code>/tmp/dispatch-xxx/headers.txt</code></td></tr>
           <tr><td><code>%B</code></td><td>Temp file with request body</td><td><code>/tmp/dispatch-xxx/body.txt</code></td></tr>
@@ -61,8 +63,22 @@ export function createHelpPanel(): HTMLElement {
       <ul class="dispatch-help-list">
         <li><strong>Name</strong> &mdash; displayed in the picker</li>
         <li><strong>Command</strong> &mdash; template with placeholders (see table above)</li>
-        <li><strong>Group</strong> &mdash; category for grouping in the picker</li>
+        <li><strong>Group</strong> &mdash; category for grouping in the picker (see below)</li>
         <li><strong>Show preview</strong> &mdash; show resolved command before running (recommended)</li>
+      </ul>
+      <h3 class="dispatch-help-subheading">Categories</h3>
+      <ul class="dispatch-help-list">
+        <li>Type any group name &mdash; if it doesn&rsquo;t exist, a new category is created automatically</li>
+        <li>A category disappears when all its tools are removed or moved to another group</li>
+        <li>To rename a category, edit each tool in it and change the Group field</li>
+      </ul>
+      <h3 class="dispatch-help-subheading">Tool Detection</h3>
+      <ul class="dispatch-help-list">
+        <li><strong style="color:var(--dispatch-success)">✓</strong> green &mdash; tool is installed (found via <code>which</code>)</li>
+        <li><strong style="color:var(--c-fg-subtle, #666)">✗</strong> gray &mdash; tool not found in PATH</li>
+        <li>Indicators appear in both the picker and the <strong>Settings</strong> tab</li>
+        <li>Click <strong>Detect Tools</strong> in Settings to refresh, or detection runs automatically when the picker opens</li>
+        <li>Tools marked <strong style="color:var(--c-fg-subtle, #666)">✗</strong> are still selectable &mdash; the indicator is informational only</li>
       </ul>
       <h3 class="dispatch-help-subheading">Example commands</h3>
       <table class="dispatch-help-table">
