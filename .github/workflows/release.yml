@@ -1,4 +1,4 @@
-name: "\U0001F680 Release"
+name: "Release"
 
 on:
   workflow_dispatch:
