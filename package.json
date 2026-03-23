@@ -1,0 +1,20 @@
+{
+  "name": "dispatch",
+  "version": "0.1.0",
+  "description": "Send HTTP requests to external CLI tools from Caido",
+  "author": "six2dez",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm run clean && pnpm -r run build && pnpm run pack",
+    "typecheck": "pnpm -r run typecheck",
+    "clean": "rm -rf dist",
+    "pack": "node ./scripts/pack.js"
+  },
+  "devDependencies": {
+    "@caido/plugin-manifest": "0.1.3",
+    "jszip": "3.10.1",
+    "typescript": "5.4.3",
+    "vite": "5.2.7"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "dispatch",
+  "name": "Dispatch",
+  "version": "0.1.0",
+  "description": "Send HTTP requests to external CLI tools from Caido",
+  "author": {
+    "name": "six2dez",
+    "url": "https://github.com/six2dez/dispatch"
+  },
+  "plugins": [
+    {
+      "kind": "frontend",
+      "id": "dispatch-frontend",
+      "name": "Dispatch Frontend",
+      "entrypoint": "frontend/script.js",
+      "style": "frontend/style.css",
+      "backend": {
+        "id": "dispatch-backend"
+      }
+    },
+    {
+      "kind": "backend",
+      "id": "dispatch-backend",
+      "name": "Dispatch Backend",
+      "runtime": "javascript",
+      "entrypoint": "backend/script.js"
+    }
+  ]
+}

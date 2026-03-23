@@ -1,0 +1,19 @@
+{
+  "name": "dispatch-frontend",
+  "version": "0.1.0",
+  "description": "Dispatch plugin frontend for Caido",
+  "author": "six2dez",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@caido/sdk-frontend": "0.41.0"
+  },
+  "devDependencies": {
+    "@caido/sdk-backend": "0.41.0",
+    "dispatch-backend": "workspace:*"
+  }
+}
