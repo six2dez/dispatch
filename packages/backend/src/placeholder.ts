@@ -4,6 +4,11 @@ import { join } from "path";
 import type { RequestData, ResolvedCommand } from "./types";
 
 export function shellEscape(s: string): string {
+  if (s.length === 0) return "''";
+  // Only quote if the value contains shell-special characters
+  if (/^[a-zA-Z0-9._\-\/:@=,+%~]+$/.test(s)) {
+    return s;
+  }
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
