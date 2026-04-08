@@ -42,6 +42,9 @@ jobs:
           version: ${{ env.PNPM_VERSION }}
           run_install: true
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Build package
         run: pnpm build
 

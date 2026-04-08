@@ -6,34 +6,24 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 ## Features
 
-- **Single context menu** — Right-click any request row → "Dispatch..." → pick a tool
-- **15 built-in presets** — sqlmap, dalfox, ffuf, nuclei, katana, arjun, subfinder, sslscan, testssl, wpscan, droopescan, httpx, curl and more
+- **Per-tool context menu** — Right-click any request → "Dispatch: sqlmap", "Dispatch: ffuf", etc. for one-click dispatch, plus "Dispatch..." for the full picker
+- **19 built-in presets** — sqlmap, dalfox, ffuf, nuclei, katana, arjun, x8, gospider, subfinder+httpx, sslscan, testssl, wpscan, droopescan, httpx, curl, LinkFinder and more
 - **Placeholder system** — `%U`, `%H`, `%R`, etc. auto-resolve from the selected request
 - **Preview & edit** — See the resolved command before running, edit flags on the fly
 - **Streaming terminal** — Real-time stdout/stderr output with kill support
 - **Multi-select** — Select multiple requests and run a tool against all of them sequentially
-- **Tool detection** — ✓ (green) if installed, ✗ (gray) if not found in PATH; shown in both picker and Settings, refreshable via "Detect Tools" button; tools marked ✗ are still selectable
+- **Tool detection** — Shows installed/missing status for each tool, with multi-binary support for pipelines
 - **Custom tools** — Add your own tools with any command template
 - **Import/Export** — Backup and share tool configurations as JSON
 - **History** — Browse past executions with filters by tool name and exit code
-
-## Screenshots
-
-| Tool Picker | Command Preview |
-|---|---|
-| ![Picker](images/picker.png) | ![Preview](images/preview.png) |
-
-| Settings | History |
-|---|---|
-| ![Settings](images/settings.png) | ![History](images/history.png) |
-
-| Help |
-|---|
-| ![Help](images/help.png) |
+- **Caido Findings** — Create Caido Findings from completed runs
+- **Shell env vars** — Use `$VAR` or `${VAR}` in templates (resolved by login shell)
+- **Binary-safe** — `%R` and `%B` preserve exact bytes for non-UTF-8 / binary request bodies
+- **Caido theme integration** — Uses native CSS variables, adapts to any Caido theme
 
 ## Installation
 
-1. Download `dist/dispatch.zip` from [Releases](https://github.com/six2dez/dispatch/releases)
+1. Download `dispatch.zip` from [Releases](https://github.com/six2dez/dispatch/releases)
 2. In Caido, go to Plugins → Install from file → Select the zip
 3. The "Dispatch" sidebar entry and context menu will appear immediately
 
@@ -49,6 +39,12 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 Select multiple request rows before clicking "Dispatch...". The tool runs once per request sequentially. The preview shows the first request; edits to flags apply to all.
 
+### Environment Variables
+
+Use `$VAR` or `${VAR}` in command templates to reference shell environment variables. Since commands run via login shell, all your system environment variables are available.
+
+Example: `wpscan --url=%U --api-token $WPSCAN_API`
+
 ## Placeholders
 
 Use these in command templates. They resolve per-request before execution.
@@ -58,18 +54,18 @@ Use these in command templates. They resolve per-request before execution.
 | `%U` | Full URL (scheme://host:port/path?query) | `https://target.com/api/users?id=1` |
 | `%H` | Host | `target.com` |
 | `%P` | Port | `443` |
-| `%A` | Path (without query) | `/api/users` |
+| `%A` | Path (without query, preserves trailing slash) | `/api/users/` |
 | `%Q` | Query string (without ?) | `id=1&name=test` |
 | `%M` | HTTP method | `POST` |
 | `%S` | Scheme | `https` |
 | `%C` | Cookies (Cookie header value) | `session=abc123; token=xyz` |
 | `%G` | User-Agent header value | `Mozilla/5.0 (Windows NT 10.0; ...)` |
 | `%D` | Root/registrable domain | `example.co.uk` |
-| `%R` | Temp file with full raw request | `/tmp/dispatch-xxx/request.raw` |
+| `%R` | Temp file with full raw request (binary-safe) | `/tmp/dispatch-xxx/request.raw` |
 | `%E` | Temp file with request headers | `/tmp/dispatch-xxx/headers.txt` |
-| `%B` | Temp file with request body | `/tmp/dispatch-xxx/body.txt` |
+| `%B` | Temp file with request body (binary-safe) | `/tmp/dispatch-xxx/body.txt` |
 
-File placeholders (`%R`, `%E`, `%B`) only create temp files when used. Files are cleaned up after execution.
+File placeholders (`%R`, `%E`, `%B`) only create temp files when used. Files are cleaned up after execution. `%R` and `%B` use raw bytes to preserve binary content without UTF-8 corruption.
 
 ## Built-in Presets
 
@@ -79,26 +75,29 @@ File placeholders (`%R`, `%E`, `%B`) only create temp files when used. Files are
 | SQL Injection | sqlmap (request file) | `sqlmap -r %R --random-agent --batch` |
 | XSS | dalfox | `dalfox url %U --user-agent %G --context-aware --deep-domxss --detailed-analysis` |
 | XSS | dalfox (request file) | `dalfox file %R --rawdata --user-agent %G --context-aware --deep-domxss --detailed-analysis` |
-| Fuzzing | ffuf | `ffuf -mc all -fc 404 -r -c -H "User-Agent: "%G -u %S://%H%A/FUZZ -w <wordlist>` |
+| Fuzzing | ffuf | `ffuf -mc all -fc 404 -r -c -H "User-Agent: "%G -u %S://%H%A/FUZZ -w WORDLIST` |
+| Fuzzing | x8 (param discovery) | `x8 -u %U -w WORDLIST` |
 | Scanning | nuclei | `nuclei -u %U -severity info,low,medium,high,critical,unknown` |
+| Scanning | nuclei (request file) | `nuclei -l %R -severity info,low,medium,high,critical,unknown` |
 | Crawling | katana | `katana -u %U -silent` |
+| Crawling | gospider | `gospider -s %U -d 2 --sitemap --robots` |
 | Param Discovery | arjun | `arjun -i %R` |
 | Recon | subfinder + httpx | `subfinder -d %D -silent \| httpx -silent -tech-detect -status-code -title` |
 | SSL | sslscan | `sslscan %H:%P` |
 | SSL | testssl | `testssl.sh --color 3 %H:%P` |
 | CMS | wpscan | `wpscan --random-user-agent --rua -e vp,cb,dbe,u --detection-mode aggressive --url=%U` |
 | CMS | droopescan | `droopescan scan drupal -u %U -t 10` |
+| JS Analysis | LinkFinder | `linkfinder -i %U -o cli` |
 | Utility | httpx | `echo %U \| httpx -silent -tech-detect -status-code -title -content-length -follow-redirects` |
 | Utility | curl verbose | `curl -v -k -L -A %G %U` |
 
-Wordlist paths and API tokens (e.g., `$WPSCAN_API`) are editable in the preview dialog before running.
+Replace `WORDLIST` in the preview dialog with your actual wordlist path before running.
 
 ## Custom Tools & Categories
 
 - Go to **Settings** → **Add Tool** to create your own commands with any placeholder
 - The **Group** field accepts any text — if the category doesn't exist, it's created automatically
 - A category disappears when all its tools are removed or moved to another group
-- To rename a category, edit each tool in it and change the Group field
 - Use **Import/Export** to backup and share your tool configurations as JSON
 
 ## Keyboard Shortcuts
@@ -129,18 +128,21 @@ The output `dist/dispatch.zip` is ready to install in Caido.
 This plugin executes arbitrary shell commands by design — it is built for security professionals who need to pipe HTTP requests to CLI tools. Key points:
 
 - All placeholder values (%U, %H, etc.) are shell-escaped automatically using single-quote wrapping
-- The preview dialog allows users to edit the resolved command before execution; edited commands are executed as-is
-- Commands run via login shell (`/bin/zsh -lc` or `/bin/bash -lc`) with the user's full PATH
+- The preview dialog allows editing the resolved command before execution; edited commands are executed as-is
+- Commands run via login shell (`/bin/zsh -lc` on macOS, `/bin/bash -lc` on Linux) with the user's full PATH
 - The plugin does NOT execute commands without user interaction (always requires context menu click + tool selection + optional preview confirmation)
-- Tool configurations imported from JSON are validated for required fields before insertion
+- `%R` and `%B` file placeholders write binary-safe data using `toBytes()`/`toRaw()` to preserve exact request content
+- Kill terminates the entire process group (pipes, subprocesses), not just the parent shell
+- Tool configurations imported from JSON get new IDs and cannot overwrite existing tools
+- Maximum 10 concurrent processes to prevent accidental resource exhaustion
 
 ## Notes
 
 - Commands execute via login shell (`/bin/zsh -lc` on macOS, `/bin/bash -lc` on Linux) to inherit your full system PATH
 - All placeholder values are shell-escaped (single-quote wrapped) automatically
-- `shell: true` semantics — pipes, redirects, and chaining work in command templates
+- Pipes, redirects, and chaining work in command templates
 - Terminal output stored in SQLite is truncated to 512KB per run; full output is visible via live streaming
-- Raw request for `%R` uses `getRaw().toText()` from the Caido SDK
+- Batch execution continues even if individual requests fail
 
 ## License
 

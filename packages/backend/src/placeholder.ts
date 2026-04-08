@@ -41,7 +41,8 @@ export function resolvePlaceholders(
 
     if (template.includes("%R")) {
       rFile = join(tmpDir, "request.raw");
-      writeFileSync(rFile, data.rawRequest);
+      // Use binary-safe bytes to preserve non-UTF-8 content
+      writeFileSync(rFile, data.rawRequestBytes);
       tempFiles.push(rFile);
     }
     if (template.includes("%E")) {
@@ -51,7 +52,8 @@ export function resolvePlaceholders(
     }
     if (template.includes("%B")) {
       bFile = join(tmpDir, "body.txt");
-      writeFileSync(bFile, data.body);
+      // Use binary-safe bytes to preserve non-UTF-8 content
+      writeFileSync(bFile, data.bodyBytes);
       tempFiles.push(bFile);
     }
   }
@@ -61,7 +63,7 @@ export function resolvePlaceholders(
     "%U": shellEscape(fullUrl),
     "%H": shellEscape(data.host),
     "%P": String(data.port),
-    "%A": shellEscape(data.path.replace(/\/+$/, "")),
+    "%A": shellEscape(data.path),
     "%Q": shellEscape(data.query),
     "%M": shellEscape(data.method),
     "%S": scheme,
@@ -74,7 +76,7 @@ export function resolvePlaceholders(
   if (bFile) replacements["%B"] = shellEscape(bFile);
 
   // Single-pass replacement — no re-expansion possible
-  const command = template.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
+  let command = template.replace(PLACEHOLDER_RE, (match) => replacements[match] ?? match);
 
   return { command, tempFiles };
 }

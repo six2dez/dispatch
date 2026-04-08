@@ -4,6 +4,8 @@ import type {
   RunEntry,
   PlaceholderPreview,
   ToolDetectionResult,
+  ToolDetectionEntry,
+  BatchProgressEvent,
   TerminalOutputEvent,
   TerminalExitEvent,
 } from "./types";
@@ -31,7 +33,7 @@ function generateId(): string {
 }
 
 // Store temp files from previews for cleanup (with timestamp for TTL)
-const PREVIEW_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PREVIEW_TTL_MS = 5 * 60 * 1000;
 const previewTempFiles = new Map<string, { tempFiles: string[]; timestamp: number }>();
 
 // --- Tools CRUD ---
@@ -92,9 +94,20 @@ async function importTools(
     const tools: unknown[] = JSON.parse(json);
     let imported = 0;
     for (const raw of tools) {
-      const t = raw as any;
-      if (typeof t?.id !== 'string' || typeof t?.name !== 'string' || typeof t?.command !== 'string') continue;
-      await insertTool({ id: t.id, name: t.name, command: t.command, group: t.group ?? '', showPreview: t.showPreview ?? true, enabled: t.enabled ?? true, sortOrder: t.sortOrder ?? 999, detectionBinary: t.detectionBinary });
+      const t = raw as Record<string, unknown>;
+      if (typeof t?.id !== "string" || typeof t?.name !== "string" || typeof t?.command !== "string") continue;
+      // Generate new ID on import to prevent overwriting existing tools
+      const newId = `imported-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await insertTool({
+        id: newId,
+        name: t.name,
+        command: t.command,
+        group: typeof t.group === "string" ? t.group : "",
+        showPreview: typeof t.showPreview === "boolean" ? t.showPreview : true,
+        enabled: typeof t.enabled === "boolean" ? t.enabled : true,
+        sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : 999,
+        detectionBinary: typeof t.detectionBinary === "string" ? t.detectionBinary : undefined,
+      });
       imported++;
     }
     return { imported };
@@ -121,7 +134,7 @@ async function resolvePreview(
   requestId: string,
   toolId: string
 ): Promise<PlaceholderPreview> {
-  // Clean stale preview entries (older than 5 min)
+  // Clean stale preview entries (older than TTL)
   const now = Date.now();
   for (const [key, entry] of previewTempFiles) {
     if (now - entry.timestamp > PREVIEW_TTL_MS) {
@@ -146,7 +159,7 @@ async function resolvePreview(
 }
 
 async function executeCommand(
-  sdk: SDK,
+  sdk: SDK<API, Events>,
   requestId: string,
   toolId: string,
   editedCmd?: string
@@ -157,29 +170,23 @@ async function executeCommand(
   const runId = generateId();
   const previewKey = `${requestId}:${toolId}`;
 
-  if (editedCmd) {
+  if (editedCmd !== undefined) {
     const entry = previewTempFiles.get(previewKey);
     const tempFiles = entry?.tempFiles ?? [];
     previewTempFiles.delete(previewKey);
-    executeToolCommand(
-      sdk, runId, editedCmd, tempFiles,
-      tool.id, tool.name, requestId, null
-    );
+    executeToolCommand(sdk, runId, editedCmd, tempFiles, tool.id, tool.name, requestId, null);
   } else {
     previewTempFiles.delete(previewKey);
     const data = await extractRequestData(sdk, requestId);
     const { command, tempFiles } = resolvePlaceholders(tool.command, data);
-    executeToolCommand(
-      sdk, runId, command, tempFiles,
-      tool.id, tool.name, requestId, null
-    );
+    executeToolCommand(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, null);
   }
 
   return runId;
 }
 
 async function executeBatch(
-  sdk: SDK,
+  sdk: SDK<API, Events>,
   requestIds: string[],
   toolId: string,
   editedCmd?: string
@@ -189,35 +196,62 @@ async function executeBatch(
 
   const batchId = generateId();
   const runIds = requestIds.map(() => generateId());
+  const total = requestIds.length;
 
   // Background sequential chain — RPC returns immediately
   (async () => {
+    let completed = 0;
     for (let i = 0; i < requestIds.length; i++) {
-      const data = await extractRequestData(sdk, requestIds[i]!);
-      const template = editedCmd ?? tool.command;
-      const { command, tempFiles } = resolvePlaceholders(template, data);
-      await executeToolCommandAsync(
-        sdk, runIds[i]!, command, tempFiles,
-        tool.id, tool.name, requestIds[i]!, batchId
-      );
+      const requestId = requestIds[i]!;
+      const runId = runIds[i]!;
+
+      // Send progress event
+      sdk.api.send("batch:progress", {
+        batchId,
+        completed,
+        total,
+        currentRunId: runId,
+        currentRequestId: requestId,
+        status: "running" as const,
+      });
+
+      try {
+        const data = await extractRequestData(sdk, requestId);
+        const template = editedCmd ?? tool.command;
+        const { command, tempFiles } = resolvePlaceholders(template, data);
+        await executeToolCommandAsync(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, batchId);
+      } catch (e) {
+        sdk.console.error(`[Dispatch] batch item ${i} failed: ${e}`);
+        // Continue with next request instead of breaking the chain
+      }
+      completed++;
     }
-  })().catch((e) => { sdk.console.error(`[Dispatch] batch failed: ${e}`); });
+
+    // Send final progress
+    sdk.api.send("batch:progress", {
+      batchId,
+      completed,
+      total,
+      currentRunId: runIds[runIds.length - 1]!,
+      currentRequestId: requestIds[requestIds.length - 1]!,
+      status: "completed" as const,
+    });
+  })().catch((e) => {
+    sdk.console.error(`[Dispatch] batch failed: ${e}`);
+  });
 
   return runIds;
 }
 
 async function executeCustom(
-  sdk: SDK,
+  sdk: SDK<API, Events>,
   requestId: string,
   command: string
 ): Promise<string> {
   const runId = generateId();
   const data = await extractRequestData(sdk, requestId);
   const { command: resolved, tempFiles } = resolvePlaceholders(command, data);
-  executeToolCommand(
-    sdk, runId, resolved, tempFiles,
-    "custom", "Custom command", requestId, null
-  );
+  executeToolCommand(sdk, runId, resolved, tempFiles, "custom", "Custom command", requestId, null);
   return runId;
 }
 
@@ -227,17 +261,11 @@ function killProcess(_sdk: SDK, runId: string): boolean {
 
 // --- History ---
 
-async function getHistory(
-  _sdk: SDK,
-  limit?: number
-): Promise<RunEntry[]> {
+async function getHistory(_sdk: SDK, limit?: number): Promise<RunEntry[]> {
   return getHistoryEntries(limit);
 }
 
-async function getRunOutput(
-  _sdk: SDK,
-  runId: string
-): Promise<{ stdout: string; stderr: string }> {
+async function getRunOutput(_sdk: SDK, runId: string): Promise<{ stdout: string; stderr: string }> {
   return getRunOutputById(runId);
 }
 
@@ -245,15 +273,38 @@ async function clearHistory(_sdk: SDK): Promise<void> {
   await clearAllHistory();
 }
 
+// --- Findings ---
+
+async function createFinding(
+  sdk: SDK,
+  requestId: string,
+  title: string,
+  description: string
+): Promise<{ id: string }> {
+  const item = await sdk.requests.get(requestId);
+  if (!item) throw new Error(`Request ${requestId} not found`);
+
+  const finding = await sdk.findings.create({
+    title,
+    description,
+    reporter: "Dispatch",
+    request: item.request,
+  });
+  return { id: String(finding.getId()) };
+}
+
 // --- Detection ---
 
-async function detectTools(sdk: SDK): Promise<ToolDetectionResult[]> {
+async function detectTools(sdk: SDK): Promise<{
+  results: ToolDetectionResult[];
+  byToolId: ToolDetectionEntry[];
+}> {
   try {
     const tools = await getAllTools();
     return await detectAllTools(tools);
   } catch (err) {
     sdk.console.error(`[Dispatch] detectTools: ${err}`);
-    return [];
+    return { results: [], byToolId: [] };
   }
 }
 
@@ -269,6 +320,7 @@ type Events = DefineEvents<{
   }) => void;
   "terminal:output": (data: TerminalOutputEvent) => void;
   "terminal:exit": (data: TerminalExitEvent) => void;
+  "batch:progress": (data: BatchProgressEvent) => void;
 }>;
 
 // --- API Type ---
@@ -290,6 +342,7 @@ export type API = DefineAPI<{
   getRunOutput: typeof getRunOutput;
   clearHistory: typeof clearHistory;
   detectTools: typeof detectTools;
+  createFinding: typeof createFinding;
 }>;
 
 // --- Re-export types for frontend ---
@@ -302,9 +355,11 @@ export type {
   TerminalOutputEvent,
   TerminalExitEvent,
   ToolDetectionResult,
+  ToolDetectionEntry,
+  BatchProgressEvent,
 } from "./types";
 
-// --- Init (SYNCHRONOUS — DB initializes lazily on first API call) ---
+// --- Init ---
 
 export function init(sdk: SDK<API, Events>) {
   setSdkRef(sdk);
@@ -328,8 +383,8 @@ export function init(sdk: SDK<API, Events>) {
   sdk.api.register("getRunOutput", getRunOutput);
   sdk.api.register("clearHistory", clearHistory);
   sdk.api.register("detectTools", detectTools);
+  sdk.api.register("createFinding", createFinding);
 
   sdk.console.log("[Dispatch] Plugin initialized");
-
   startPeriodicCleanup();
 }

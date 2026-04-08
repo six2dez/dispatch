@@ -1,59 +1,77 @@
+import { createApp } from "vue";
+import PrimeVue from "primevue/config";
+import Aura from "@primevue/themes/aura";
 import type { CaidoSDK } from "./types";
-
-import { createDispatchPage } from "./pages/DispatchPage";
-import { openToolPicker } from "./components/ToolPicker";
-import { addRun, appendOutput, finishRun } from "./components/Terminal";
-
+import App from "./App.vue";
+import { sdkKey } from "./composables/useSdk";
+import { useTerminal } from "./composables/useTerminal";
 import "./styles/index.css";
 
 const Page = "/dispatch" as const;
 
-export const init = (sdk: CaidoSDK) => {
-  // Store SDK reference for components that need it (e.g., kill button)
-  (window as any).__dispatchSdk = sdk;
+// Extract request IDs from any command context
+function extractRequestIds(context: Record<string, unknown>): string[] {
+  const ids: string[] = [];
 
-  // Register the single "Dispatch..." command
+  if ("requests" in context && Array.isArray(context.requests)) {
+    for (const r of context.requests) {
+      if (r.id) ids.push(String(r.id));
+    }
+  }
+
+  if ("request" in context && context.request) {
+    const req = context.request as Record<string, unknown>;
+    if (req.id) ids.push(String(req.id));
+  }
+
+  return ids;
+}
+
+export const init = (sdk: CaidoSDK) => {
+  const root = document.createElement("div");
+  root.style.height = "100%";
+  root.classList.add("p-dark");
+  // PrimeVue needs .p-dark on <html> for global components (Dialog, Select overlay)
+  document.documentElement.classList.add("p-dark");
+
+  const app = createApp(App);
+
+  app.use(PrimeVue, {
+    theme: {
+      preset: Aura,
+      options: {
+        darkModeSelector: ".p-dark",
+        cssLayer: false,
+      },
+    },
+  });
+
+  app.provide(sdkKey, sdk);
+
+  const vm = app.mount(root);
+  const appInstance = vm as InstanceType<typeof App>;
+
+  // Register the Dispatch page
+  sdk.navigation.addPage(Page, { body: root });
+
+  sdk.sidebar.registerItem("Dispatch", Page, {
+    icon: "fas fa-terminal",
+  });
+
+  // Main "Dispatch..." command — opens the picker
   sdk.commands.register("dispatch-open", {
     name: "Dispatch...",
     run: (context) => {
-      try {
-        const requestIds: string[] = [];
-
-        // RequestRowContext: right-click on request row(s) in table
-        if ("requests" in context && Array.isArray(context.requests)) {
-          for (const r of context.requests) {
-            if (r.id) requestIds.push(String(r.id));
-          }
-        }
-
-        // RequestContext: right-click on request pane (no ID, but has raw)
-        if ("request" in context && context.request) {
-          const req = context.request as any;
-          if (req.id) {
-            requestIds.push(String(req.id));
-          }
-        }
-
-        if (requestIds.length === 0) {
-          sdk.window.showToast("No request ID found in context", {
-            variant: "warning",
-            duration: 3000,
-          });
-          return;
-        }
-
-        openToolPicker(sdk, requestIds);
-      } catch (err) {
-        sdk.window.showToast(`Dispatch error: ${err}`, {
-          variant: "error",
-          duration: 5000,
-        });
+      const requestIds = extractRequestIds(context as Record<string, unknown>);
+      if (requestIds.length === 0) {
+        sdk.window.showToast("No request ID found in context", { variant: "warning", duration: 3000 });
+        return;
       }
+      appInstance.openPicker(requestIds);
     },
     group: "Dispatch",
   });
 
-  // Register context menu items
   sdk.menu.registerItem({
     type: "RequestRow",
     commandId: "dispatch-open",
@@ -66,34 +84,65 @@ export const init = (sdk: CaidoSDK) => {
     leadingIcon: "fas fa-terminal",
   });
 
-  // Register command palette entry
   sdk.commandPalette.register("dispatch-open");
 
-  // Create and register the Dispatch page
-  const page = createDispatchPage(sdk);
-  sdk.navigation.addPage(Page, { body: page });
+  // Register per-tool quick dispatch commands
+  sdk.backend.getTools().then((tools) => {
+    for (const tool of tools) {
+      if (!tool.enabled) continue;
 
-  // Register sidebar item
-  sdk.sidebar.registerItem("Dispatch", Page, {
-    icon: "fas fa-terminal",
+      const cmdId = `dispatch-tool-${tool.id}`;
+
+      sdk.commands.register(cmdId, {
+        name: `Dispatch: ${tool.name}`,
+        run: (context) => {
+          const requestIds = extractRequestIds(context as Record<string, unknown>);
+          if (requestIds.length === 0) {
+            sdk.window.showToast("No request ID found in context", { variant: "warning", duration: 3000 });
+            return;
+          }
+          appInstance.dispatchTool(tool, requestIds);
+        },
+        group: "Dispatch",
+      });
+
+      sdk.menu.registerItem({
+        type: "RequestRow",
+        commandId: cmdId,
+        leadingIcon: "fas fa-terminal",
+      });
+
+      sdk.commandPalette.register(cmdId);
+    }
   });
 
-  // Listen for terminal events from backend
-  sdk.backend.onEvent("terminal:start", (event: any) => {
+  // Terminal event handlers
+  const { addRun, appendOutput, finishRun } = useTerminal();
+
+  sdk.backend.onEvent("terminal:start", (event) => {
+    const e = event as {
+      runId: string;
+      toolName: string;
+      resolvedCommand: string;
+      requestId: string | null;
+      startedAt: string;
+    };
     addRun({
-      runId: event.runId,
-      toolName: event.toolName,
-      resolvedCommand: event.resolvedCommand,
-      requestId: event.requestId ?? null,
-      startedAt: event.startedAt,
+      runId: e.runId,
+      toolName: e.toolName,
+      resolvedCommand: e.resolvedCommand,
+      requestId: e.requestId,
+      startedAt: e.startedAt,
     });
   });
 
-  sdk.backend.onEvent("terminal:output", (event: any) => {
-    appendOutput(event.runId, event.data, event.stream);
+  sdk.backend.onEvent("terminal:output", (event) => {
+    const e = event as { runId: string; data: string; stream: "stdout" | "stderr" };
+    appendOutput(e.runId, e.data, e.stream);
   });
 
-  sdk.backend.onEvent("terminal:exit", (event: any) => {
-    finishRun(event.runId, event.exitCode, event.duration);
+  sdk.backend.onEvent("terminal:exit", (event) => {
+    const e = event as { runId: string; exitCode: number; duration: number };
+    finishRun(e.runId, e.exitCode, e.duration);
   });
 };

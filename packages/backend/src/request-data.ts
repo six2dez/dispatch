@@ -18,7 +18,13 @@ export async function extractRequestData(
   const tls = request.getTls();
   const body = request.getBody()?.toText() ?? "";
 
-  const rawRequest = request.getRaw().toText();
+  const rawObj = request.getRaw();
+  const rawRequest = rawObj.toText();
+
+  // Binary-safe: preserve exact bytes for file placeholders
+  const rawRequestBytes = rawObj.toBytes();
+  const bodyBytes = request.getBody()?.toRaw() ?? new Uint8Array(0);
+
   const headers = extractHeadersFromRaw(rawRequest);
 
   const cookieValues = request.getHeader("Cookie");
@@ -46,6 +52,8 @@ export async function extractRequestData(
     userAgent,
     rootDomain,
     rawRequest,
+    rawRequestBytes,
+    bodyBytes,
   };
 }
 
@@ -90,7 +98,6 @@ const MULTI_PART_TLDS = new Set([
 ]);
 
 function extractRootDomain(host: string): string {
-  // IP address or localhost — return as-is
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host === "localhost") {
     return host;
   }
@@ -98,15 +105,12 @@ function extractRootDomain(host: string): string {
   const parts = host.split(".");
   if (parts.length <= 2) return host;
 
-  // Check for multi-part TLD
   const lastTwo = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
   if (MULTI_PART_TLDS.has(lastTwo)) {
-    // root domain is name.multi.tld (3 parts from the end)
     return parts.length >= 3
       ? parts.slice(-3).join(".")
       : host;
   }
 
-  // Standard TLD: root domain is last 2 parts
   return parts.slice(-2).join(".");
 }

@@ -1,6 +1,6 @@
 {
   "name": "dispatch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Send HTTP requests to external CLI tools from Caido",
   "author": "six2dez",
   "license": "MIT",
@@ -8,11 +8,16 @@
   "scripts": {
     "build": "pnpm run clean && pnpm -r run build && pnpm run pack",
     "typecheck": "pnpm -r run typecheck",
+    "lint": "eslint packages/",
     "clean": "rm -rf dist",
     "pack": "node ./scripts/pack.js"
   },
   "devDependencies": {
     "@caido/plugin-manifest": "0.1.3",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
+    "eslint": "^10.2.0",
+    "eslint-plugin-vue": "^10.8.0",
     "jszip": "3.10.1",
     "typescript": "5.4.3",
     "vite": "5.2.7"

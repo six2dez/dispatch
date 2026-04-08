@@ -65,9 +65,29 @@ export interface RequestData {
   userAgent: string;
   rootDomain: string;
   rawRequest: string;
+  // Binary-safe versions for file placeholders (%R, %B)
+  rawRequestBytes: Uint8Array;
+  bodyBytes: Uint8Array;
 }
 
 export interface ResolvedCommand {
   command: string;
   tempFiles: string[];
+}
+
+export interface BatchProgressEvent {
+  batchId: string;
+  completed: number;
+  total: number;
+  currentRunId: string;
+  currentRequestId: string;
+  status: "running" | "completed" | "failed";
+}
+
+export interface ToolDetectionEntry {
+  toolId: string;
+  binary: string;
+  installed: boolean;
+  path: string | null;
+  missingBinaries?: string[];
 }

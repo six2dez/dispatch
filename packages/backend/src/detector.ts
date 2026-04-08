@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { platform } from "os";
-import type { ToolConfig, ToolDetectionResult } from "./types";
+import type { ToolConfig, ToolDetectionResult, ToolDetectionEntry } from "./types";
 import { shellEscape } from "./placeholder";
 
 const IS_MAC = platform() === "darwin";
@@ -19,7 +19,6 @@ export function detectTool(
 
     try {
       let output = "";
-      // Use login shell to get full PATH for which
       const escaped = shellEscape(binary);
       const child = IS_WINDOWS
         ? spawn("where", [binary])
@@ -38,69 +37,75 @@ export function detectTool(
         });
       });
 
-      // Handle spawn errors (e.g., command not found)
       child.on("error", () => {
         done({ installed: false, path: null });
       });
 
-      // Timeout: if which/where takes >3s, assume not found
       setTimeout(() => {
-        try { child.kill(); } catch {}
+        try { child.kill(); } catch { /* already dead */ }
         done({ installed: false, path: null });
       }, 3000);
     } catch {
-      // spawn itself threw
       done({ installed: false, path: null });
     }
   });
 }
 
-export function extractBinaryFromCommand(command: string): string {
-  const parts = command.split(/&&|;/).map((s) => s.trim());
-  const lastPart = parts[parts.length - 1] ?? command;
+/** Extract ALL binaries from a command (handles pipes, &&, ;). */
+export function extractAllBinariesFromCommand(command: string): string[] {
+  const binaries: string[] = [];
+  // Split on pipes, &&, and ;
+  const segments = command.split(/\||&&|;/).map((s) => s.trim()).filter((s) => s.length > 0);
 
-  if (/^(echo|printf)\s/.test(lastPart) && lastPart.includes("|")) {
-    const pipeParts = lastPart.split("|").map((s) => s.trim());
-    const afterPipe = pipeParts[1] ?? "";
-    return extractBinary(afterPipe);
+  for (const segment of segments) {
+    const binary = extractBinary(segment);
+    if (binary.length > 0 && !binaries.includes(binary)) {
+      binaries.push(binary);
+    }
   }
 
-  return extractBinary(lastPart);
+  return binaries.length > 0 ? binaries : [command.split(/\s/)[0] ?? command];
 }
 
+/** Extract the primary binary from a single command segment. */
 function extractBinary(segment: string): string {
-  const SKIP_PREFIXES = /^(sudo|env|nohup|nice|time)\s+/;
+  const SKIP_PREFIXES = /^(sudo|env|nohup|nice|time|echo|printf)\s+/;
   let s = segment;
-  // Strip known prefixes
   while (SKIP_PREFIXES.test(s)) {
     s = s.replace(SKIP_PREFIXES, "");
   }
-  // Skip env-style VAR=value assignments
   const tokens = s.split(/\s+/);
   for (const token of tokens) {
     if (token.includes("=") && !token.startsWith("-")) continue;
+    // Skip placeholder-only tokens
+    if (/^%[A-Z]$/.test(token)) continue;
     return token;
   }
   return s.split(/\s/)[0] ?? s;
 }
 
+/** Detect all tools, returning per-tool entries with all required binaries. */
 export async function detectAllTools(
   tools: ToolConfig[]
-): Promise<ToolDetectionResult[]> {
-  const binaryMap = new Map<string, string[]>();
+): Promise<{ results: ToolDetectionResult[]; byToolId: ToolDetectionEntry[] }> {
+  // Collect all unique binaries across all tools
+  const allBinaries = new Set<string>();
+  const toolBinaryMap = new Map<string, string[]>(); // toolId -> binaries[]
 
   for (const tool of tools) {
-    const binary =
-      tool.detectionBinary ?? extractBinaryFromCommand(tool.command);
-    if (!binaryMap.has(binary)) {
-      binaryMap.set(binary, []);
+    const binaries = tool.detectionBinary
+      ? [tool.detectionBinary]
+      : extractAllBinariesFromCommand(tool.command);
+    toolBinaryMap.set(tool.id, binaries);
+    for (const b of binaries) {
+      allBinaries.add(b);
     }
-    binaryMap.get(binary)!.push(tool.id);
   }
 
-  const binaries = Array.from(binaryMap.keys());
-  const results = await Promise.all(
-    binaries.map(async (binary) => {
+  // Detect all unique binaries in parallel
+  const binaryList = Array.from(allBinaries);
+  const detections = await Promise.all(
+    binaryList.map(async (binary) => {
       try {
         const detection = await detectTool(binary);
         return { binary, ...detection };
@@ -109,5 +114,37 @@ export async function detectAllTools(
       }
     })
   );
-  return results;
+
+  const detectionMap = new Map<string, ToolDetectionResult>();
+  for (const det of detections) {
+    detectionMap.set(det.binary, det);
+  }
+
+  // Build per-tool entries — a tool is "installed" only if ALL its binaries are found
+  const byToolId: ToolDetectionEntry[] = [];
+  for (const tool of tools) {
+    const binaries = toolBinaryMap.get(tool.id) ?? [];
+    const missingBinaries: string[] = [];
+
+    for (const b of binaries) {
+      const det = detectionMap.get(b);
+      if (!det || !det.installed) {
+        missingBinaries.push(b);
+      }
+    }
+
+    const allInstalled = missingBinaries.length === 0;
+    const primaryBinary = binaries[0] ?? "";
+    const primaryDet = detectionMap.get(primaryBinary);
+
+    byToolId.push({
+      toolId: tool.id,
+      binary: primaryBinary,
+      installed: allInstalled,
+      path: primaryDet?.path ?? null,
+      missingBinaries: missingBinaries.length > 0 ? missingBinaries : undefined,
+    });
+  }
+
+  return { results: detections, byToolId };
 }

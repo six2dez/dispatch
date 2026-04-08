@@ -1,62 +1,73 @@
 import type { Database } from "sqlite";
 import type { ToolConfig, RunEntry } from "./types";
+import type { SDK } from "caido:plugin";
+import type { API, Events } from "./index";
 import { DEFAULT_PRESETS } from "./presets";
 
-let dbPromise: Promise<Database> | null = null;
-let sdk_ref: any = null;
+type PluginSDK = SDK<API, Events>;
 
-export function setSdkRef(sdk: any): void {
-  sdk_ref = sdk;
+let dbPromise: Promise<Database> | null = null;
+let sdkRef: PluginSDK | undefined;
+
+export function setSdkRef(sdk: PluginSDK): void {
+  sdkRef = sdk;
 }
 
 function log(msg: string): void {
-  try {
-    sdk_ref?.console?.log(`[Dispatch] ${msg}`);
-  } catch {}
+  sdkRef?.console?.log(`[Dispatch] ${msg}`);
 }
 
 function logError(msg: string): void {
-  try {
-    sdk_ref?.console?.error(`[Dispatch] ${msg}`);
-  } catch {}
+  sdkRef?.console?.error(`[Dispatch] ${msg}`);
 }
 
 export async function getDb(): Promise<Database> {
   if (!dbPromise) {
-    if (!sdk_ref) throw new Error("SDK not set");
+    if (!sdkRef) throw new Error("SDK not set");
     dbPromise = initDatabase();
   }
   return dbPromise;
 }
 
-// SQL escape for string values
+// SQL escape for string values (single-quote escaping for SQLite)
 function sqlEscape(s: string): string {
   return s.replace(/'/g, "''");
 }
 
-// --- Auto-detect query API ---
+// --- Query abstraction ---
+// Caido's sdk.meta.db() may expose different APIs across versions.
+// We probe once at init and cache the working method.
 
-// Cached query function, determined once during initDatabase().
-let queryFn: ((db: any, sql: string) => Promise<any[]>) | null = null;
+type QueryFn = (db: Database, sql: string) => Promise<Record<string, unknown>[]>;
 
-// Probe the DB object to find a working query method and cache it.
-// Caido versions differ: some have prepare(), some have query(), some only exec().
-async function probeQueryMethod(db: any): Promise<(db: any, sql: string) => Promise<any[]>> {
+let queryFn: QueryFn | null = null;
+
+async function probeQueryMethod(db: Database): Promise<QueryFn> {
   const testSql = "SELECT 1 as _probe";
+  const dbAny = db as unknown as Record<string, unknown>;
 
-  // Method 1: prepare().all()
-  if (typeof db.prepare === "function") {
+  // Method 1: prepare().all() — standard sqlite API
+  if (typeof dbAny.prepare === "function") {
     try {
-      const stmt = db.prepare(testSql);
-      const resolved = stmt && typeof stmt.then === "function" ? await stmt : stmt;
-      if (resolved && typeof resolved.all === "function") {
-        const rows = await resolved.all();
+      const prepareFn = dbAny.prepare as (sql: string) => unknown;
+      const stmt = prepareFn.call(db, testSql);
+      const resolved = (stmt && typeof (stmt as Promise<unknown>).then === "function")
+        ? await (stmt as Promise<unknown>)
+        : stmt;
+      const resolvedObj = resolved as Record<string, unknown>;
+      if (resolvedObj && typeof resolvedObj.all === "function") {
+        const allFn = resolvedObj.all as () => unknown;
+        const rows = await allFn.call(resolved);
         if (Array.isArray(rows)) {
           log("Using query method: prepare().all()");
-          return async (d: any, sql: string) => {
-            const s = d.prepare(sql);
-            const r = s && typeof s.then === "function" ? await s : s;
-            return (r && typeof r.all === "function") ? await r.all() : [];
+          return async (d: Database, sql: string) => {
+            const dAny = d as unknown as Record<string, unknown>;
+            const s = (dAny.prepare as (sql: string) => unknown).call(d, sql);
+            const r = (s && typeof (s as Promise<unknown>).then === "function") ? await s : s;
+            const rObj = r as Record<string, unknown>;
+            return (rObj && typeof rObj.all === "function")
+              ? await (rObj.all as () => Promise<Record<string, unknown>[]>).call(r)
+              : [];
           };
         }
       }
@@ -65,81 +76,45 @@ async function probeQueryMethod(db: any): Promise<(db: any, sql: string) => Prom
     }
   }
 
-  // Method 2: db.query()
-  if (typeof db.query === "function") {
+  // Method 2: db.exec() — fallback
+  if (typeof dbAny.exec === "function") {
     try {
-      const rows = await db.query(testSql);
-      if (Array.isArray(rows)) {
-        log("Using query method: db.query()");
-        return async (d: any, sql: string) => {
-          const r = await d.query(sql);
-          return Array.isArray(r) ? r : [];
+      const execFn = dbAny.exec as (sql: string) => unknown;
+      const result = await execFn.call(db, testSql);
+      if (Array.isArray(result)) {
+        log("Using query method: db.exec() (array)");
+        return async (d: Database, sql: string) => {
+          const dAny = d as unknown as Record<string, unknown>;
+          const r = await (dAny.exec as (sql: string) => Promise<unknown>).call(d, sql);
+          return Array.isArray(r) ? r as Record<string, unknown>[] : [];
         };
       }
-    } catch (e) {
-      log(`db.query() probe failed: ${e}`);
-    }
-  }
-
-  // Method 3: db.all()
-  if (typeof db.all === "function") {
-    try {
-      const rows = await db.all(testSql);
-      if (Array.isArray(rows)) {
-        log("Using query method: db.all()");
-        return async (d: any, sql: string) => {
-          const r = await d.all(sql);
-          return Array.isArray(r) ? r : [];
-        };
-      }
-    } catch (e) {
-      log(`db.all() probe failed: ${e}`);
-    }
-  }
-
-  // Method 4: db.select()
-  if (typeof db.select === "function") {
-    try {
-      const rows = await db.select(testSql);
-      if (Array.isArray(rows)) {
-        log("Using query method: db.select()");
-        return async (d: any, sql: string) => {
-          const r = await d.select(sql);
-          return Array.isArray(r) ? r : [];
-        };
-      }
-    } catch (e) {
-      log(`db.select() probe failed: ${e}`);
-    }
-  }
-
-  // Method 5: exec() might return rows in some versions
-  if (typeof db.exec === "function") {
-    try {
-      const result = await db.exec(testSql);
-      if (Array.isArray(result) || (result && typeof result === "object" && (Array.isArray(result.rows) || Array.isArray(result.values)))) {
-        log("Using query method: db.exec()");
-        return async (d: any, sql: string) => {
-          const r = await d.exec(sql);
-          if (Array.isArray(r)) return r;
-          if (r && typeof r === "object") {
-            if (Array.isArray(r.rows)) return r.rows;
-            if (Array.isArray(r.values)) {
-              // Convert tuples to objects using column names if available
-              if (Array.isArray(r.columns) && r.columns.length > 0) {
-                return r.values.map((row: any[]) => {
-                  const obj: Record<string, any> = {};
-                  for (let i = 0; i < r.columns.length; i++) {
-                    obj[r.columns[i]] = row[i];
-                  }
-                  return obj;
-                });
+      if (result && typeof result === "object") {
+        const resultObj = result as Record<string, unknown>;
+        if (Array.isArray(resultObj.rows)) {
+          log("Using query method: db.exec() (rows)");
+          return async (d: Database, sql: string) => {
+            const dAny = d as unknown as Record<string, unknown>;
+            const r = await (dAny.exec as (sql: string) => Promise<unknown>).call(d, sql) as Record<string, unknown>;
+            return Array.isArray(r?.rows) ? r.rows as Record<string, unknown>[] : [];
+          };
+        }
+        if (Array.isArray(resultObj.values) && Array.isArray(resultObj.columns)) {
+          log("Using query method: db.exec() (columns+values)");
+          return async (d: Database, sql: string) => {
+            const dAny = d as unknown as Record<string, unknown>;
+            const r = await (dAny.exec as (sql: string) => Promise<unknown>).call(d, sql) as Record<string, unknown>;
+            if (!Array.isArray(r?.values) || !Array.isArray(r?.columns)) return [];
+            const cols = r.columns as string[];
+            return (r.values as unknown[][]).map((row) => {
+              const obj: Record<string, unknown> = {};
+              for (let i = 0; i < cols.length; i++) {
+                obj[cols[i]!] = row[i];
               }
-              return r.values;
-            }
-          }
-          return [];
-        };
+              return obj;
+            });
+          };
+        }
       }
     } catch (e) {
       log(`exec() probe failed: ${e}`);
@@ -147,57 +122,50 @@ async function probeQueryMethod(db: any): Promise<(db: any, sql: string) => Prom
   }
 
   log("WARNING: No working query method found, queries will return []");
-  return async (_d: any, sql: string) => {
-    log(`WARNING: No query method available for: ${sql.slice(0, 80)}`);
-    return [];
-  };
+  return async () => [];
 }
 
-async function query(db: any, sql: string): Promise<any[]> {
+async function query(db: Database, sql: string): Promise<Record<string, unknown>[]> {
   if (!queryFn) {
-    // Fallback: should not happen if initDatabase ran, but be safe
     queryFn = await probeQueryMethod(db);
   }
   return queryFn(db, sql);
 }
 
-// Run a write statement (INSERT/UPDATE/DELETE)
-async function sqlRun(db: any, sql: string): Promise<void> {
-  if (typeof db.exec === "function") {
-    await db.exec(sql);
-    return;
+// Cached write function, determined once during initDatabase().
+type WriteFn = (db: Database, sql: string) => Promise<void>;
+let writeFn: WriteFn | null = null;
+
+function probeWriteMethod(db: Database): WriteFn {
+  const dbAny = db as unknown as Record<string, unknown>;
+  if (typeof dbAny.exec === "function") {
+    return async (d, sql) => {
+      await ((d as unknown as Record<string, unknown>).exec as (sql: string) => Promise<void>).call(d, sql);
+    };
   }
-  if (typeof db.run === "function") {
-    await db.run(sql);
-    return;
+  if (typeof dbAny.run === "function") {
+    return async (d, sql) => {
+      await ((d as unknown as Record<string, unknown>).run as (sql: string) => Promise<void>).call(d, sql);
+    };
   }
   throw new Error("No exec or run method on database");
 }
 
-async function initDatabase(): Promise<Database> {
-  log("Initializing database...");
-  const db = await sdk_ref.meta.db();
-
-  // Log available methods for debugging
-  try {
-    const proto = Object.getPrototypeOf(db);
-    const protoMethods = proto
-      ? Object.getOwnPropertyNames(proto).filter(
-          (k: string) => typeof db[k] === "function"
-        )
-      : [];
-    const ownMethods = Object.getOwnPropertyNames(db).filter(
-      (k: string) => typeof db[k] === "function"
-    );
-    log(`DB proto methods: ${protoMethods.join(", ") || "(none)"}`);
-    log(`DB own methods: ${ownMethods.join(", ") || "(none)"}`);
-    log(`DB keys: ${Object.keys(db).join(", ") || "(none)"}`);
-  } catch (e) {
-    log(`Failed to inspect DB: ${e}`);
+async function sqlRun(db: Database, sql: string): Promise<void> {
+  if (!writeFn) {
+    writeFn = probeWriteMethod(db);
   }
+  return writeFn(db, sql);
+}
 
-  // Probe and cache the working query method
+async function initDatabase(): Promise<Database> {
+  if (!sdkRef) throw new Error("SDK not set");
+  log("Initializing database...");
+  const db: Database = await sdkRef.meta.db();
+
+  // Probe and cache query/write methods
   queryFn = await probeQueryMethod(db);
+  writeFn = probeWriteMethod(db);
 
   await sqlRun(db, `CREATE TABLE IF NOT EXISTS tools (
     id TEXT PRIMARY KEY,
@@ -209,7 +177,6 @@ async function initDatabase(): Promise<Database> {
     sort_order INTEGER DEFAULT 0,
     detection_binary TEXT DEFAULT NULL
   )`);
-  log("Created tools table");
 
   await sqlRun(db, `CREATE TABLE IF NOT EXISTS history (
     id TEXT PRIMARY KEY,
@@ -225,13 +192,12 @@ async function initDatabase(): Promise<Database> {
     started_at TEXT NOT NULL,
     finished_at TEXT
   )`);
-  log("Created history table");
 
   // Seed presets if empty
   try {
     const rows = await query(db, "SELECT COUNT(*) as count FROM tools");
-    log(`Count query returned: ${JSON.stringify(rows)}`);
-    const count = Number(rows?.[0]?.count ?? rows?.[0]?.["COUNT(*)"] ?? 0);
+    const first = rows[0];
+    const count = Number(first?.count ?? first?.["COUNT(*)"] ?? 0);
     if (count === 0) {
       log("Seeding default presets...");
       for (const preset of DEFAULT_PRESETS) {
@@ -250,72 +216,48 @@ async function initDatabase(): Promise<Database> {
 }
 
 function buildInsertToolSql(tool: ToolConfig): string {
-  const detBin = tool.detectionBinary
+  const detBin = tool.detectionBinary !== undefined
     ? `'${sqlEscape(tool.detectionBinary)}'`
     : "NULL";
   return `INSERT OR REPLACE INTO tools (id, name, command, "group", show_preview, enabled, sort_order, detection_binary)
     VALUES ('${sqlEscape(tool.id)}', '${sqlEscape(tool.name)}', '${sqlEscape(tool.command)}', '${sqlEscape(tool.group)}', ${tool.showPreview ? 1 : 0}, ${tool.enabled ? 1 : 0}, ${tool.sortOrder}, ${detBin})`;
 }
 
-async function execInsertTool(db: any, tool: ToolConfig): Promise<void> {
+async function execInsertTool(db: Database, tool: ToolConfig): Promise<void> {
   await sqlRun(db, buildInsertToolSql(tool));
 }
 
-// --- Row types ---
+// --- Row mapping ---
 
-interface ToolRow {
-  id: string;
-  name: string;
-  command: string;
-  group: string;
-  show_preview: number;
-  enabled: number;
-  sort_order: number;
-  detection_binary: string | null;
-}
-
-interface HistoryRow {
-  id: string;
-  tool_id: string;
-  tool_name: string;
-  request_id: string | null;
-  batch_id: string | null;
-  resolved_command: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number | null;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-}
-
-function rowToTool(row: ToolRow): ToolConfig {
+function rowToTool(row: Record<string, unknown>): ToolConfig {
   return {
-    id: row.id,
-    name: row.name,
-    command: row.command,
-    group: row.group,
+    id: String(row.id ?? ""),
+    name: String(row.name ?? ""),
+    command: String(row.command ?? ""),
+    group: String(row.group ?? ""),
     showPreview: Boolean(row.show_preview),
     enabled: Boolean(row.enabled),
-    sortOrder: row.sort_order,
-    detectionBinary: row.detection_binary ?? undefined,
+    sortOrder: Number(row.sort_order ?? 0),
+    detectionBinary: row.detection_binary !== null && row.detection_binary !== undefined
+      ? String(row.detection_binary)
+      : undefined,
   };
 }
 
-function rowToRunEntry(row: HistoryRow): RunEntry {
+function rowToRunEntry(row: Record<string, unknown>): RunEntry {
   return {
-    id: row.id,
-    toolId: row.tool_id,
-    toolName: row.tool_name,
-    requestId: row.request_id,
-    batchId: row.batch_id,
-    resolvedCommand: row.resolved_command,
-    stdout: row.stdout,
-    stderr: row.stderr,
-    exitCode: row.exit_code,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at,
-    status: row.status as RunEntry["status"],
+    id: String(row.id ?? ""),
+    toolId: String(row.tool_id ?? ""),
+    toolName: String(row.tool_name ?? ""),
+    requestId: row.request_id !== null && row.request_id !== undefined ? String(row.request_id) : null,
+    batchId: row.batch_id !== null && row.batch_id !== undefined ? String(row.batch_id) : null,
+    resolvedCommand: String(row.resolved_command ?? ""),
+    stdout: String(row.stdout ?? ""),
+    stderr: String(row.stderr ?? ""),
+    exitCode: row.exit_code !== null && row.exit_code !== undefined ? Number(row.exit_code) : null,
+    startedAt: String(row.started_at ?? ""),
+    finishedAt: row.finished_at !== null && row.finished_at !== undefined ? String(row.finished_at) : null,
+    status: String(row.status ?? "running") as RunEntry["status"],
   };
 }
 
@@ -328,22 +270,14 @@ export async function insertTool(tool: ToolConfig): Promise<void> {
 
 export async function getAllTools(): Promise<ToolConfig[]> {
   const db = await getDb();
-  const rows = await query(
-    db,
-    "SELECT * FROM tools ORDER BY sort_order, name"
-  );
+  const rows = await query(db, "SELECT * FROM tools ORDER BY sort_order, name");
   return rows.map(rowToTool);
 }
 
-export async function getToolById(
-  id: string
-): Promise<ToolConfig | undefined> {
+export async function getToolById(id: string): Promise<ToolConfig | undefined> {
   const db = await getDb();
-  const rows = await query(
-    db,
-    `SELECT * FROM tools WHERE id = '${sqlEscape(id)}'`
-  );
-  return rows.length > 0 ? rowToTool(rows[0]) : undefined;
+  const rows = await query(db, `SELECT * FROM tools WHERE id = '${sqlEscape(id)}'`);
+  return rows.length > 0 ? rowToTool(rows[0]!) : undefined;
 }
 
 export async function deleteToolById(id: string): Promise<void> {
@@ -354,10 +288,7 @@ export async function deleteToolById(id: string): Promise<void> {
 export async function updateToolOrder(ids: string[]): Promise<void> {
   const db = await getDb();
   for (let i = 0; i < ids.length; i++) {
-    await sqlRun(
-      db,
-      `UPDATE tools SET sort_order = ${i} WHERE id = '${sqlEscape(ids[i]!)}'`
-    );
+    await sqlRun(db, `UPDATE tools SET sort_order = ${i} WHERE id = '${sqlEscape(ids[i]!)}'`);
   }
 }
 
@@ -370,15 +301,12 @@ export async function deleteAllTools(): Promise<void> {
 
 export async function insertHistoryEntry(entry: RunEntry): Promise<void> {
   const db = await getDb();
-  const reqId = entry.requestId ? `'${sqlEscape(entry.requestId)}'` : "NULL";
-  const batchId = entry.batchId ? `'${sqlEscape(entry.batchId)}'` : "NULL";
+  const reqId = entry.requestId !== null ? `'${sqlEscape(entry.requestId)}'` : "NULL";
+  const batchId = entry.batchId !== null ? `'${sqlEscape(entry.batchId)}'` : "NULL";
   const exitCode = entry.exitCode !== null ? entry.exitCode : "NULL";
-  const finishedAt = entry.finishedAt
-    ? `'${sqlEscape(entry.finishedAt)}'`
-    : "NULL";
+  const finishedAt = entry.finishedAt !== null ? `'${sqlEscape(entry.finishedAt)}'` : "NULL";
 
-  await sqlRun(
-    db,
+  await sqlRun(db,
     `INSERT INTO history (id, tool_id, tool_name, request_id, batch_id, resolved_command, stdout, stderr, exit_code, status, started_at, finished_at)
      VALUES ('${sqlEscape(entry.id)}', '${sqlEscape(entry.toolId)}', '${sqlEscape(entry.toolName)}', ${reqId}, ${batchId}, '${sqlEscape(entry.resolvedCommand)}', '${sqlEscape(entry.stdout)}', '${sqlEscape(entry.stderr)}', ${exitCode}, '${sqlEscape(entry.status)}', '${sqlEscape(entry.startedAt)}', ${finishedAt})`
   );
@@ -397,48 +325,33 @@ export async function updateHistoryEntry(
   const db = await getDb();
   const sets: string[] = [];
 
-  if (updates.stdout !== undefined)
-    sets.push(`stdout = '${sqlEscape(updates.stdout)}'`);
-  if (updates.stderr !== undefined)
-    sets.push(`stderr = '${sqlEscape(updates.stderr)}'`);
-  if (updates.exitCode !== undefined)
-    sets.push(`exit_code = ${updates.exitCode}`);
-  if (updates.status !== undefined)
-    sets.push(`status = '${sqlEscape(updates.status)}'`);
-  if (updates.finishedAt !== undefined)
-    sets.push(`finished_at = '${sqlEscape(updates.finishedAt)}'`);
+  if (updates.stdout !== undefined) sets.push(`stdout = '${sqlEscape(updates.stdout)}'`);
+  if (updates.stderr !== undefined) sets.push(`stderr = '${sqlEscape(updates.stderr)}'`);
+  if (updates.exitCode !== undefined) sets.push(`exit_code = ${updates.exitCode}`);
+  if (updates.status !== undefined) sets.push(`status = '${sqlEscape(updates.status)}'`);
+  if (updates.finishedAt !== undefined) sets.push(`finished_at = '${sqlEscape(updates.finishedAt)}'`);
 
   if (sets.length > 0) {
-    await sqlRun(
-      db,
-      `UPDATE history SET ${sets.join(", ")} WHERE id = '${sqlEscape(runId)}'`
-    );
+    await sqlRun(db, `UPDATE history SET ${sets.join(", ")} WHERE id = '${sqlEscape(runId)}'`);
   }
 }
 
-export async function getHistoryEntries(
-  limit?: number
-): Promise<RunEntry[]> {
+export async function getHistoryEntries(limit?: number): Promise<RunEntry[]> {
   const db = await getDb();
-  const sql = limit
+  const sql = limit !== undefined
     ? `SELECT * FROM history ORDER BY started_at DESC LIMIT ${limit}`
     : "SELECT * FROM history ORDER BY started_at DESC";
   const rows = await query(db, sql);
   return rows.map(rowToRunEntry);
 }
 
-export async function getRunOutputById(
-  runId: string
-): Promise<{ stdout: string; stderr: string }> {
+export async function getRunOutputById(runId: string): Promise<{ stdout: string; stderr: string }> {
   const db = await getDb();
-  const rows = await query(
-    db,
-    `SELECT stdout, stderr FROM history WHERE id = '${sqlEscape(runId)}'`
-  );
+  const rows = await query(db, `SELECT stdout, stderr FROM history WHERE id = '${sqlEscape(runId)}'`);
   if (rows.length === 0) return { stdout: "", stderr: "" };
   return {
-    stdout: rows[0].stdout ?? "",
-    stderr: rows[0].stderr ?? "",
+    stdout: String(rows[0]!.stdout ?? ""),
+    stderr: String(rows[0]!.stderr ?? ""),
   };
 }
 

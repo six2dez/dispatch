@@ -3,23 +3,40 @@ import { rmSync, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { tmpdir, platform } from "os";
 import type { SDK } from "caido:plugin";
+import type { API, Events } from "./index";
 import { insertHistoryEntry, updateHistoryEntry } from "./db";
 
+type PluginSDK = SDK<API, Events>;
+
 const IS_MAC = platform() === "darwin";
+const MAX_STORED_OUTPUT = 512 * 1024; // 512KB per stream
+const MAX_CONCURRENT = 10;
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_TEMP_AGE_MS = 10 * 60 * 1000;
 
-let sdkRef: any = null;
+let sdkRef: PluginSDK | undefined;
 
-export function setExecutorSdk(sdk: any): void {
+export function setExecutorSdk(sdk: PluginSDK): void {
   sdkRef = sdk;
 }
 
 const activeProcesses = new Map<string, ChildProcess>();
 const killedRunIds = new Set<string>();
-const MAX_STORED_OUTPUT = 512 * 1024; // 512KB
+
+function logError(msg: string): void {
+  sdkRef?.console?.error(`[Dispatch] ${msg}`);
+}
+
+export function getActiveCount(): number {
+  return activeProcesses.size;
+}
+
+export function isAtCapacity(): boolean {
+  return activeProcesses.size >= MAX_CONCURRENT;
+}
 
 // Spawn using user's login shell to inherit full PATH
 function spawnWithLoginShell(command: string): ChildProcess {
-  // macOS: zsh, Linux/other: bash, final fallback: plain shell
   try {
     if (IS_MAC) {
       return spawn("/bin/zsh", ["-lc", command]);
@@ -30,18 +47,31 @@ function spawnWithLoginShell(command: string): ChildProcess {
   }
 }
 
-// Periodic cleanup interval (5 minutes)
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-// Max age for temp directories (10 minutes)
-const MAX_TEMP_AGE_MS = 10 * 60 * 1000;
+// Kill entire process tree — not just the shell
+// Uses shell commands to kill the process group, avoiding orphans from pipes
+function killProcessTree(child: ChildProcess, signal: string): void {
+  const pid = child.pid;
+  if (pid === undefined) {
+    child.kill();
+    return;
+  }
 
-// Helper to send events — bypasses strict keyof Events typing on SDK<{},{}>
-function sendEvent(sdk: SDK, event: string, data: unknown): void {
-  (sdk.api.send as (event: string, data: unknown) => void)(event, data);
+  // Use shell to kill the process group and children
+  // kill -- -PID sends signal to entire process group
+  // pkill -P as fallback kills direct children
+  try {
+    spawn("sh", ["-c", `kill -s ${signal} -- -${pid} 2>/dev/null || (pkill -${signal} -P ${pid} 2>/dev/null; kill -s ${signal} ${pid} 2>/dev/null)`]);
+  } catch {
+    try {
+      child.kill();
+    } catch {
+      // Process already dead
+    }
+  }
 }
 
 function spawnAndTrack(
-  sdk: SDK,
+  sdk: PluginSDK,
   runId: string,
   resolvedCommand: string,
   tempFiles: string[],
@@ -50,7 +80,19 @@ function spawnAndTrack(
   startedAt: string,
   onClose?: () => void
 ): void {
-  sendEvent(sdk, "terminal:start", {
+  if (isAtCapacity()) {
+    logError(`Max concurrent processes (${MAX_CONCURRENT}) reached, rejecting ${runId}`);
+    updateHistoryEntry(runId, {
+      status: "error",
+      stderr: `Rejected: max concurrent processes (${MAX_CONCURRENT}) reached`,
+      exitCode: -1,
+      finishedAt: new Date().toISOString(),
+    }).catch((e) => logError(`updateHistoryEntry failed: ${e}`));
+    onClose?.();
+    return;
+  }
+
+  sdk.api.send("terminal:start", {
     runId,
     toolName,
     resolvedCommand,
@@ -61,65 +103,52 @@ function spawnAndTrack(
   const child = spawnWithLoginShell(resolvedCommand);
   activeProcesses.set(runId, child);
 
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
+  let stdoutBuf = "";
+  let stderrBuf = "";
 
   child.stdout?.on("data", (data) => {
     const chunk = data.toString();
-    stdoutBuffer += chunk;
-    if (stdoutBuffer.length > MAX_STORED_OUTPUT) {
-      stdoutBuffer = stdoutBuffer.slice(-MAX_STORED_OUTPUT);
+    stdoutBuf += chunk;
+    if (stdoutBuf.length > MAX_STORED_OUTPUT) {
+      stdoutBuf = stdoutBuf.slice(-MAX_STORED_OUTPUT);
     }
-    sendEvent(sdk, "terminal:output", {
-      runId,
-      data: chunk,
-      stream: "stdout",
-    });
+    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stdout" as const });
   });
 
   child.stderr?.on("data", (data) => {
     const chunk = data.toString();
-    stderrBuffer += chunk;
-    if (stderrBuffer.length > MAX_STORED_OUTPUT) {
-      stderrBuffer = stderrBuffer.slice(-MAX_STORED_OUTPUT);
+    stderrBuf += chunk;
+    if (stderrBuf.length > MAX_STORED_OUTPUT) {
+      stderrBuf = stderrBuf.slice(-MAX_STORED_OUTPUT);
     }
-    sendEvent(sdk, "terminal:output", {
-      runId,
-      data: chunk,
-      stream: "stderr",
-    });
+    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stderr" as const });
   });
 
   child.on("close", (exitCode: number | null) => {
     const finishedAt = new Date().toISOString();
-    const duration =
-      new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+    const duration = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
     const wasKilled = killedRunIds.has(runId);
     killedRunIds.delete(runId);
     activeProcesses.delete(runId);
 
     updateHistoryEntry(runId, {
-      stdout: stdoutBuffer,
-      stderr: stderrBuffer,
+      stdout: stdoutBuf,
+      stderr: stderrBuf,
       exitCode: exitCode ?? -1,
       status: wasKilled ? "killed" : "completed",
       finishedAt,
-    }).catch((e) => { sdkRef?.console?.error(`[Dispatch] updateHistoryEntry failed: ${e}`); });
+    }).catch((e) => logError(`updateHistoryEntry failed: ${e}`));
 
-    sendEvent(sdk, "terminal:exit", {
-      runId,
-      exitCode: exitCode ?? -1,
-      duration,
-    });
+    sdk.api.send("terminal:exit", { runId, exitCode: exitCode ?? -1, duration });
 
     cleanupTempFiles(tempFiles);
     onClose?.();
   });
 }
 
-/** Fire-and-forget: inserts history entry asynchronously and spawns immediately. */
+/** Fire-and-forget: inserts history then spawns immediately. */
 export function executeToolCommand(
-  sdk: SDK,
+  sdk: PluginSDK,
   runId: string,
   resolvedCommand: string,
   tempFiles: string[],
@@ -143,14 +172,14 @@ export function executeToolCommand(
     status: "running",
     startedAt,
     finishedAt: null,
-  }).catch((e) => { sdkRef?.console?.error(`[Dispatch] insertHistoryEntry failed: ${e}`); });
+  }).catch((e) => logError(`insertHistoryEntry failed: ${e}`));
 
   spawnAndTrack(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt);
 }
 
-/** Async version: awaits insertHistoryEntry before spawning, resolves when child closes. */
+/** Async version: awaits DB insert, resolves when child closes. */
 export async function executeToolCommandAsync(
-  sdk: SDK,
+  sdk: PluginSDK,
   runId: string,
   resolvedCommand: string,
   tempFiles: string[],
@@ -186,19 +215,14 @@ export function killActiveProcess(runId: string): boolean {
   if (!proc) return false;
 
   killedRunIds.add(runId);
-  proc.kill("SIGTERM");
-  // Fallback to SIGKILL after 5s if process still in map
+  killProcessTree(proc, "TERM");
+
+  // Fallback to SIGKILL after 5s if process still alive
   setTimeout(() => {
     if (activeProcesses.has(runId)) {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        // Process may already be dead
-      }
+      killProcessTree(proc, "KILL");
     }
   }, 5000);
-
-  // Do NOT delete from activeProcesses here — let the close handler do it.
 
   return true;
 }
@@ -223,7 +247,6 @@ function cleanupStaleTempDirs(): void {
 
     for (const entry of entries) {
       if (!entry.startsWith("dispatch-")) continue;
-
       const fullPath = join(tmp, entry);
       try {
         const stat = statSync(fullPath);
@@ -231,7 +254,7 @@ function cleanupStaleTempDirs(): void {
           rmSync(fullPath, { recursive: true });
         }
       } catch {
-        // Ignore individual directory errors
+        // Ignore individual errors
       }
     }
   } catch {
@@ -239,14 +262,10 @@ function cleanupStaleTempDirs(): void {
   }
 }
 
-// Start periodic cleanup
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 export function startPeriodicCleanup(): void {
   if (cleanupTimer) return;
-  // Run once immediately
   cleanupStaleTempDirs();
-  // Then periodically
   cleanupTimer = setInterval(cleanupStaleTempDirs, CLEANUP_INTERVAL_MS);
 }
-

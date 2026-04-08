@@ -1,10 +1,11 @@
 {
   "id": "dispatch",
   "name": "Dispatch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Send HTTP requests to external CLI tools from Caido",
   "author": {
     "name": "six2dez",
+    "email": "six2dez@gmail.com",
     "url": "https://github.com/six2dez/dispatch"
   },
   "plugins": [

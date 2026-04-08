@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["DOM", "ESNext"],
-    "types": ["@caido/sdk-backend"]
+    "types": ["@caido/sdk-backend"],
+    "jsx": "preserve",
+    "jsxImportSource": "vue"
   },
-  "include": ["./src/**/*.ts"]
+  "include": ["./src/**/*.ts", "./src/**/*.vue", "./env.d.ts"]
 }
