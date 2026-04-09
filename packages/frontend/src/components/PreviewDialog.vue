@@ -5,6 +5,7 @@ import Button from "primevue/button";
 import Textarea from "primevue/textarea";
 import type { ToolConfig, PlaceholderPreview } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
 
@@ -27,12 +28,12 @@ function open(
 }
 
 function run(): void {
-  visible.value = false;
   const t = tool.value;
   const ids = currentRequestIds.value;
-  if (!t || ids.length === 0) return;
+  const cmd = editedCommand.value.trim();
+  if (!t || ids.length === 0 || cmd.length === 0) return;
 
-  const cmd = editedCommand.value;
+  visible.value = false;
   const promise = ids.length === 1
     ? sdk.backend.executeCommand(ids[0]!, t.id, cmd)
     : sdk.backend.executeBatch(ids, t.id, cmd);
@@ -40,13 +41,23 @@ function run(): void {
   promise
     .then(() => sdk.navigation.goTo("/dispatch"))
     .catch((err: unknown) => {
-      sdk.window.showToast(`Execute failed: ${err}`, { variant: "error", duration: 5000 });
+      sdk.window.showToast(`Execute failed: ${getErrorMessage(err, "Could not start the command")}`, {
+        variant: "error",
+        duration: 5000,
+      });
     });
 }
 
-function copy(): void {
-  navigator.clipboard.writeText(editedCommand.value).catch(() => {});
-  sdk.window.showToast("Copied to clipboard", { variant: "success", duration: 1500 });
+async function copy(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(editedCommand.value);
+    sdk.window.showToast("Copied to clipboard", { variant: "success", duration: 1500 });
+  } catch (err: unknown) {
+    sdk.window.showToast(`Copy failed: ${getErrorMessage(err, "Could not copy the command")}`, {
+      variant: "error",
+      duration: 3000,
+    });
+  }
 }
 
 function handleKeydown(e: KeyboardEvent): void {
@@ -76,7 +87,10 @@ defineExpose({ open });
     :style="{ width: '800px', maxWidth: '90vw' }"
     @keydown="handleKeydown"
   >
-    <div v-if="currentRequestIds.length > 1" class="preview-multi-note">
+    <div
+      v-if="currentRequestIds.length > 1"
+      class="preview-multi-note"
+    >
       This command will run for {{ currentRequestIds.length }} requests. Edits apply to all.
       Request-specific values (%U, %H, %R, etc.) will be re-resolved per request.
     </div>
@@ -87,25 +101,56 @@ defineExpose({ open });
       class="preview-command"
     />
 
-    <div v-if="currentRequestIds.length > 1 && preview" class="preview-reference">
-      <div class="preview-ref-label">Preview (1st request):</div>
-      <div class="preview-ref-cmd">{{ preview.resolvedCommand }}</div>
+    <div
+      v-if="currentRequestIds.length > 1 && preview"
+      class="preview-reference"
+    >
+      <div class="preview-ref-label">
+        Preview (1st request):
+      </div>
+      <div class="preview-ref-cmd">
+        {{ preview.resolvedCommand }}
+      </div>
     </div>
 
-    <details v-if="usedPlaceholders.length > 0" class="preview-placeholders">
+    <details
+      v-if="usedPlaceholders.length > 0"
+      class="preview-placeholders"
+    >
       <summary>Placeholders ({{ usedPlaceholders.length }})</summary>
       <table class="preview-ph-table">
-        <tr v-for="ph in usedPlaceholders" :key="ph.key">
-          <td class="ph-key">{{ ph.key }}</td>
-          <td class="ph-value">{{ ph.value }}</td>
+        <tr
+          v-for="ph in usedPlaceholders"
+          :key="ph.key"
+        >
+          <td class="ph-key">
+            {{ ph.key }}
+          </td>
+          <td class="ph-value">
+            {{ ph.value }}
+          </td>
         </tr>
       </table>
     </details>
 
     <template #footer>
-      <Button label="Cancel" severity="secondary" text @click="visible = false" />
-      <Button label="Copy" severity="secondary" outlined @click="copy" />
-      <Button label="Run" severity="primary" @click="run" />
+      <Button
+        label="Cancel"
+        severity="secondary"
+        text
+        @click="visible = false"
+      />
+      <Button
+        label="Copy"
+        severity="secondary"
+        outlined
+        @click="copy"
+      />
+      <Button
+        label="Run"
+        severity="primary"
+        @click="run"
+      />
     </template>
   </Dialog>
 </template>

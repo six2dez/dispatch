@@ -6,16 +6,16 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 ## Features
 
-- **Per-tool context menu** — Right-click any request → "Dispatch: sqlmap", "Dispatch: ffuf", etc. for one-click dispatch, plus "Dispatch..." for the full picker
+- **Per-tool context menu** — Right-click any request → "Dispatch: sqlmap", "Dispatch: ffuf", etc. for one-click dispatch, plus "Dispatch..." for the full picker; quick entries stay in sync with Settings changes
 - **19 built-in presets** — sqlmap, dalfox, ffuf, nuclei, katana, arjun, x8, gospider, subfinder+httpx, sslscan, testssl, wpscan, droopescan, httpx, curl, LinkFinder and more
 - **Placeholder system** — `%U`, `%H`, `%R`, etc. auto-resolve from the selected request
 - **Preview & edit** — See the resolved command before running, edit flags on the fly
 - **Streaming terminal** — Real-time stdout/stderr output with kill support
-- **Multi-select** — Select multiple requests and run a tool against all of them sequentially
+- **Multi-select** — Select multiple requests and run a tool against all of them sequentially, with live batch progress in the Terminal tab
 - **Tool detection** — Shows installed/missing status for each tool, with multi-binary support for pipelines
 - **Custom tools** — Add your own tools with any command template
 - **Import/Export** — Backup and share tool configurations as JSON
-- **History** — Browse past executions with filters by tool name and exit code
+- **History** — Browse past executions with filters by tool name and exit code, with automatic refresh as runs finish
 - **Caido Findings** — Create Caido Findings from completed runs
 - **Shell env vars** — Use `$VAR` or `${VAR}` in templates (resolved by login shell)
 - **Binary-safe** — `%R` and `%B` preserve exact bytes for non-UTF-8 / binary request bodies
@@ -37,7 +37,7 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 ### Multi-select
 
-Select multiple request rows before clicking "Dispatch...". The tool runs once per request sequentially. The preview shows the first request; edits to flags apply to all.
+Select multiple request rows before clicking "Dispatch...". The tool runs once per request sequentially. The preview shows the first request; edits to flags apply to all, and the Terminal tab shows live batch progress while the batch is running.
 
 ### Environment Variables
 
@@ -85,7 +85,7 @@ File placeholders (`%R`, `%E`, `%B`) only create temp files when used. Files are
 | Recon | subfinder + httpx | `subfinder -d %D -silent \| httpx -silent -tech-detect -status-code -title` |
 | SSL | sslscan | `sslscan %H:%P` |
 | SSL | testssl | `testssl.sh --color 3 %H:%P` |
-| CMS | wpscan | `wpscan --random-user-agent --rua -e vp,cb,dbe,u --detection-mode aggressive --url=%U` |
+| CMS | wpscan | `wpscan --random-user-agent --rua -e vp,cb,dbe,u --detection-mode aggressive --api-token $WPSCAN_API -v --disable-tls-checks --ignore-main-redirect --url=%U` |
 | CMS | droopescan | `droopescan scan drupal -u %U -t 10` |
 | JS Analysis | LinkFinder | `linkfinder -i %U -o cli` |
 | Utility | httpx | `echo %U \| httpx -silent -tech-detect -status-code -title -content-length -follow-redirects` |
@@ -99,6 +99,7 @@ Replace `WORDLIST` in the preview dialog with your actual wordlist path before r
 - The **Group** field accepts any text — if the category doesn't exist, it's created automatically
 - A category disappears when all its tools are removed or moved to another group
 - Use **Import/Export** to backup and share your tool configurations as JSON
+- Quick-dispatch entries update automatically after you add, edit, disable, or remove a tool in Settings
 
 ## Keyboard Shortcuts
 
@@ -118,6 +119,8 @@ Replace `WORDLIST` in the preview dialog with your actual wordlist path before r
 git clone https://github.com/six2dez/dispatch.git
 cd dispatch
 pnpm install
+pnpm run lint
+pnpm run typecheck
 pnpm run build
 ```
 
@@ -141,7 +144,7 @@ This plugin executes arbitrary shell commands by design — it is built for secu
 - Commands execute via login shell (`/bin/zsh -lc` on macOS, `/bin/bash -lc` on Linux) to inherit your full system PATH
 - All placeholder values are shell-escaped (single-quote wrapped) automatically
 - Pipes, redirects, and chaining work in command templates
-- Terminal output stored in SQLite is truncated to 512KB per run; full output is visible via live streaming
+- Terminal output stored in SQLite is truncated to 512KB per stream; the in-app terminal also caps buffered stdout/stderr to 512KB each
 - Batch execution continues even if individual requests fail
 
 ## License

@@ -4,17 +4,22 @@ import Dialog from "primevue/dialog";
 import InputText from "primevue/inputtext";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useToolCatalog } from "../composables/useToolCatalog";
 import { useDetection } from "../composables/useDetection";
+import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
-const { setDetectionResults, isToolInstalled, shouldRefresh } = useDetection();
+const { enabledTools, refreshToolCatalog } = useToolCatalog();
+const { refreshDetection, isToolInstalled, shouldRefresh } = useDetection();
 
 const visible = ref(false);
 const searchQuery = ref("");
-const tools = ref<ToolConfig[]>([]);
 const requestIds = ref<string[]>([]);
 const selectedIndex = ref(0);
 const searchEl = ref<HTMLInputElement>();
+const loading = ref(false);
+const loadError = ref("");
+let openSequence = 0;
 
 const emit = defineEmits<{
   "tool-selected": [tool: ToolConfig, requestIds: string[]];
@@ -26,23 +31,45 @@ function open(ids: string[]): void {
   searchQuery.value = "";
   selectedIndex.value = 0;
   visible.value = true;
+  loadError.value = "";
 
-  sdk.backend.getTools().then((allTools) => {
-    tools.value = allTools.filter((t) => t.enabled);
-    if (shouldRefresh()) {
-      sdk.backend.detectTools().then((detection) => {
-        setDetectionResults(detection.byToolId);
+  const sequence = ++openSequence;
+
+  void (async () => {
+    loading.value = true;
+
+    try {
+      if (enabledTools.value.length === 0) {
+        await refreshToolCatalog(sdk);
+      }
+
+      if (sequence !== openSequence || !visible.value) return;
+
+      if (shouldRefresh()) {
+        await refreshDetection(sdk, true);
+      }
+    } catch (err: unknown) {
+      if (sequence !== openSequence || !visible.value) return;
+
+      loadError.value = getErrorMessage(err, "Could not load tools");
+      sdk.window.showToast(`Failed to open picker: ${loadError.value}`, {
+        variant: "error",
+        duration: 5000,
       });
+    } finally {
+      if (sequence === openSequence) {
+        loading.value = false;
+      }
     }
-  });
+  })();
 
   nextTick(() => searchEl.value?.focus());
 }
 
 const filteredTools = computed(() => {
   const q = searchQuery.value.toLowerCase();
-  if (q.length === 0) return tools.value;
-  return tools.value.filter(
+  if (q.length === 0) return enabledTools.value;
+  return enabledTools.value.filter(
     (t) => t.name.toLowerCase().includes(q) || t.group.toLowerCase().includes(q)
   );
 });
@@ -65,6 +92,7 @@ const toolIndexMap = computed(() => {
 });
 
 function selectTool(tool: ToolConfig): void {
+  if (loading.value) return;
   visible.value = false;
   emit("tool-selected", tool, requestIds.value);
 }
@@ -75,6 +103,7 @@ function openCustom(): void {
 }
 
 function handleKeydown(e: KeyboardEvent): void {
+  if (loading.value) return;
   if (e.key === "ArrowDown") {
     e.preventDefault();
     if (filteredTools.value.length > 0) {
@@ -96,6 +125,13 @@ watch(searchQuery, () => {
   selectedIndex.value = 0;
 });
 
+watch(visible, (isVisible) => {
+  if (isVisible) return;
+  openSequence++;
+  loading.value = false;
+  loadError.value = "";
+});
+
 defineExpose({ open });
 </script>
 
@@ -109,7 +145,10 @@ defineExpose({ open });
     @keydown="handleKeydown"
   >
     <template #header>
-      <span v-if="requestIds.length > 1" class="picker-count">
+      <span
+        v-if="requestIds.length > 1"
+        class="picker-count"
+      >
         {{ requestIds.length }} requests selected
       </span>
       <span v-else>Dispatch...</span>
@@ -124,8 +163,31 @@ defineExpose({ open });
     />
 
     <div class="picker-list">
-      <template v-for="[groupName, groupTools] of grouped" :key="groupName">
-        <div class="picker-group-header">{{ groupName }}</div>
+      <div
+        v-if="loading"
+        class="picker-empty"
+      >
+        Loading tools...
+      </div>
+      <div
+        v-else-if="loadError.length > 0"
+        class="picker-empty"
+      >
+        {{ loadError }}
+      </div>
+      <div
+        v-else-if="filteredTools.length === 0 && searchQuery.length === 0"
+        class="picker-empty"
+      >
+        No enabled tools yet. Add one in Settings or enable an existing preset.
+      </div>
+      <template
+        v-for="[groupName, groupTools] of grouped"
+        :key="groupName"
+      >
+        <div class="picker-group-header">
+          {{ groupName }}
+        </div>
         <div
           v-for="tool of groupTools"
           :key="tool.id"
@@ -137,20 +199,30 @@ defineExpose({ open });
           <span
             v-if="isToolInstalled(tool.id) === true"
             class="picker-status picker-installed"
-          >&#x2713;</span>
+          >
+            &#x2713;
+          </span>
           <span
             v-else-if="isToolInstalled(tool.id) === false"
             class="picker-status picker-missing"
-          >&#x2717;</span>
+          >
+            &#x2717;
+          </span>
         </div>
       </template>
 
-      <div v-if="filteredTools.length === 0 && searchQuery.length > 0" class="picker-empty">
+      <div
+        v-if="!loading && loadError.length === 0 && filteredTools.length === 0 && searchQuery.length > 0"
+        class="picker-empty"
+      >
         No tools match your search.
       </div>
     </div>
 
-    <div class="picker-custom" @click="openCustom">
+    <div
+      class="picker-custom"
+      @click="openCustom"
+    >
       Custom command...
     </div>
   </Dialog>

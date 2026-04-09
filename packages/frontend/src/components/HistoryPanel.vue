@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import Button from "primevue/button";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
@@ -7,9 +7,12 @@ import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Dialog from "primevue/dialog";
 import type { RunEntry } from "dispatch-backend";
+import { useTerminal } from "../composables/useTerminal";
 import { useSdk } from "../composables/useSdk";
+import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const { completedRunsVersion } = useTerminal();
 
 const rawEntries = ref<RunEntry[]>([]);
 const loading = ref(false);
@@ -37,6 +40,7 @@ const outputTitle = ref("");
 const outputStdout = ref("");
 const outputStderr = ref("");
 const outputRequestId = ref<string | null>(null);
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 const statusOptions = [
   { label: "All", value: "" },
@@ -72,7 +76,9 @@ async function fetchHistory(): Promise<void> {
   try {
     rawEntries.value = await sdk.backend.getHistory(500);
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed to load history: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed to load history: ${getErrorMessage(err, "Could not load history")}`, {
+      variant: "error",
+    });
   } finally {
     loading.value = false;
   }
@@ -91,7 +97,9 @@ async function viewOutput(entry: RunEntry): Promise<void> {
     outputRequestId.value = entry.requestId;
     outputVisible.value = true;
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed to load output: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed to load output: ${getErrorMessage(err, "Could not load output")}`, {
+      variant: "error",
+    });
   }
 }
 
@@ -108,7 +116,9 @@ async function createFinding(): Promise<void> {
     );
     sdk.window.showToast("Finding created", { variant: "success" });
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed to create finding: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed to create finding: ${getErrorMessage(err, "Could not create the finding")}`, {
+      variant: "error",
+    });
   }
 }
 
@@ -117,11 +127,34 @@ async function clearHistory(): Promise<void> {
     await sdk.backend.clearHistory();
     await fetchHistory();
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed to clear history: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed to clear history: ${getErrorMessage(err, "Could not clear the history")}`, {
+      variant: "error",
+    });
   }
 }
 
-onMounted(fetchHistory);
+function scheduleHistoryRefresh(): void {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+  }
+
+  refreshTimer = setTimeout(() => {
+    void fetchHistory();
+  }, 250);
+}
+
+watch(completedRunsVersion, () => {
+  scheduleHistoryRefresh();
+});
+
+onMounted(() => {
+  void fetchHistory();
+});
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+  }
+});
 </script>
 
 <template>
@@ -138,35 +171,53 @@ onMounted(fetchHistory);
         <Select
           v-model="filterStatus"
           :options="statusOptions"
-          optionLabel="label"
-          optionValue="value"
+          option-label="label"
+          option-value="value"
           size="small"
           class="filter-select"
         />
       </div>
       <div class="history-actions">
-        <Button label="Refresh" size="small" severity="secondary" text @click="fetchHistory" />
-        <Button label="Clear History" size="small" severity="danger" text @click="clearHistory" />
+        <Button
+          label="Refresh"
+          size="small"
+          severity="secondary"
+          text
+          @click="fetchHistory"
+        />
+        <Button
+          label="Clear History"
+          size="small"
+          severity="danger"
+          text
+          @click="clearHistory"
+        />
       </div>
     </div>
 
     <DataTable
       :value="entries"
       :loading="loading"
-      stripedRows
+      striped-rows
       size="small"
-      @row-click="handleRowClick"
       class="history-table"
+      @row-click="handleRowClick"
     >
       <Column header="Time">
         <template #body="{ data }">
           {{ new Date((data as RunEntry).startedAt).toLocaleString() }}
         </template>
       </Column>
-      <Column field="toolName" header="Tool" />
+      <Column
+        field="toolName"
+        header="Tool"
+      />
       <Column header="Command">
         <template #body="{ data }">
-          <code class="history-command" :title="(data as RunEntry).resolvedCommand">
+          <code
+            class="history-command"
+            :title="(data as RunEntry).resolvedCommand"
+          >
             {{ (data as RunEntry).resolvedCommand }}
           </code>
         </template>
@@ -202,9 +253,20 @@ onMounted(fetchHistory);
       :style="{ width: '700px', maxWidth: '95vw' }"
     >
       <div class="output-content">
-        <pre v-if="outputStdout" class="output-text">{{ outputStdout }}</pre>
-        <pre v-if="outputStderr" class="output-text output-stderr">{{ outputStderr }}</pre>
-        <div v-if="!outputStdout && !outputStderr" class="output-empty">(no output)</div>
+        <pre
+          v-if="outputStdout"
+          class="output-text"
+        >{{ outputStdout }}</pre>
+        <pre
+          v-if="outputStderr"
+          class="output-text output-stderr"
+        >{{ outputStderr }}</pre>
+        <div
+          v-if="!outputStdout && !outputStderr"
+          class="output-empty"
+        >
+          (no output)
+        </div>
       </div>
       <template #footer>
         <Button
@@ -214,7 +276,12 @@ onMounted(fetchHistory);
           size="small"
           @click="createFinding"
         />
-        <Button label="Close" severity="secondary" text @click="outputVisible = false" />
+        <Button
+          label="Close"
+          severity="secondary"
+          text
+          @click="outputVisible = false"
+        />
       </template>
     </Dialog>
   </div>

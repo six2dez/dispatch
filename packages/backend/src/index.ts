@@ -24,9 +24,18 @@ import {
 import { DEFAULT_PRESETS } from "./presets";
 import { resolvePlaceholders, buildPlaceholderInfo } from "./placeholder";
 import { extractRequestData } from "./request-data";
-import { executeToolCommand, executeToolCommandAsync, killActiveProcess, startPeriodicCleanup, setExecutorSdk } from "./executor";
+import {
+  executeToolCommand,
+  executeToolCommandAsync,
+  getMaxConcurrent,
+  isAtCapacity,
+  killActiveProcess,
+  setExecutorSdk,
+  startPeriodicCleanup,
+} from "./executor";
 import { detectAllTools } from "./detector";
 import { rmSync } from "fs";
+import { dirname } from "path";
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -35,6 +44,21 @@ function generateId(): string {
 // Store temp files from previews for cleanup (with timestamp for TTL)
 const PREVIEW_TTL_MS = 5 * 60 * 1000;
 const previewTempFiles = new Map<string, { tempFiles: string[]; timestamp: number }>();
+
+function assertExecutionCapacity(): void {
+  if (isAtCapacity()) {
+    throw new Error(`Max concurrent processes (${getMaxConcurrent()}) reached`);
+  }
+}
+
+function cleanupPreviewTempFiles(tempFiles: string[]): void {
+  if (tempFiles.length === 0) return;
+  try {
+    rmSync(dirname(tempFiles[0]!), { recursive: true, force: true });
+  } catch {
+    // Ignore preview temp cleanup errors and let TTL cleanup try again later if needed.
+  }
+}
 
 // --- Tools CRUD ---
 
@@ -138,9 +162,7 @@ async function resolvePreview(
   const now = Date.now();
   for (const [key, entry] of previewTempFiles) {
     if (now - entry.timestamp > PREVIEW_TTL_MS) {
-      for (const f of entry.tempFiles) {
-        try { rmSync(f); } catch { /* ignore */ }
-      }
+      cleanupPreviewTempFiles(entry.tempFiles);
       previewTempFiles.delete(key);
     }
   }
@@ -153,6 +175,10 @@ async function resolvePreview(
   const placeholders = buildPlaceholderInfo(tool.command, data);
 
   const key = `${requestId}:${toolId}`;
+  const existingPreview = previewTempFiles.get(key);
+  if (existingPreview) {
+    cleanupPreviewTempFiles(existingPreview.tempFiles);
+  }
   previewTempFiles.set(key, { tempFiles, timestamp: now });
 
   return { resolvedCommand: command, template: tool.command, placeholders };
@@ -166,6 +192,7 @@ async function executeCommand(
 ): Promise<string> {
   const tool = await getToolById(toolId);
   if (!tool) throw new Error(`Tool ${toolId} not found`);
+  assertExecutionCapacity();
 
   const runId = generateId();
   const previewKey = `${requestId}:${toolId}`;
@@ -191,18 +218,21 @@ async function executeBatch(
   toolId: string,
   editedCmd?: string
 ): Promise<string[]> {
+  const uniqueRequestIds = [...new Set(requestIds)];
   const tool = await getToolById(toolId);
   if (!tool) throw new Error(`Tool ${toolId} not found`);
+  if (uniqueRequestIds.length === 0) throw new Error("No requests provided");
+  assertExecutionCapacity();
 
   const batchId = generateId();
-  const runIds = requestIds.map(() => generateId());
-  const total = requestIds.length;
+  const runIds = uniqueRequestIds.map(() => generateId());
+  const total = uniqueRequestIds.length;
 
   // Background sequential chain — RPC returns immediately
   (async () => {
     let completed = 0;
-    for (let i = 0; i < requestIds.length; i++) {
-      const requestId = requestIds[i]!;
+    for (let i = 0; i < uniqueRequestIds.length; i++) {
+      const requestId = uniqueRequestIds[i]!;
       const runId = runIds[i]!;
 
       // Send progress event
@@ -233,7 +263,7 @@ async function executeBatch(
       completed,
       total,
       currentRunId: runIds[runIds.length - 1]!,
-      currentRequestId: requestIds[requestIds.length - 1]!,
+      currentRequestId: uniqueRequestIds[uniqueRequestIds.length - 1]!,
       status: "completed" as const,
     });
   })().catch((e) => {
@@ -248,6 +278,7 @@ async function executeCustom(
   requestId: string,
   command: string
 ): Promise<string> {
+  assertExecutionCapacity();
   const runId = generateId();
   const data = await extractRequestData(sdk, requestId);
   const { command: resolved, tempFiles } = resolvePlaceholders(command, data);

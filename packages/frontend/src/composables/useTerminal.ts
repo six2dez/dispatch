@@ -1,12 +1,22 @@
-import { shallowRef, computed, triggerRef } from "vue";
+import { shallowRef, computed, triggerRef, ref } from "vue";
+import type { BatchProgressEvent } from "dispatch-backend";
 import type { RunState } from "../types";
 
 const MAX_OUTPUT_SIZE = 512 * 1024; // 512KB cap to match backend
 
 const runs = shallowRef<Map<string, RunState>>(new Map());
+const batches = shallowRef<Map<string, BatchProgressEvent>>(new Map());
+const completedRunsVersion = ref(0);
+
+function capOutput(buffer: string): string {
+  return buffer.length > MAX_OUTPUT_SIZE
+    ? buffer.slice(-MAX_OUTPUT_SIZE)
+    : buffer;
+}
 
 export function useTerminal() {
   const runList = computed(() => Array.from(runs.value.values()).reverse());
+  const activeBatches = computed(() => Array.from(batches.value.values()));
 
   const hasRunningProcesses = computed(() =>
     Array.from(runs.value.values()).some((r) => !r.finished)
@@ -40,14 +50,20 @@ export function useTerminal() {
     if (!state) return;
 
     // Mutate in-place — shallowRef won't trigger on deep changes, so we triggerRef manually
-    state.output += data;
-    if (state.output.length > MAX_OUTPUT_SIZE) {
-      state.output = state.output.slice(-MAX_OUTPUT_SIZE);
-    }
+    state.output = capOutput(state.output + data);
     if (stream === "stderr") {
-      state.stderr += data;
+      state.stderr = capOutput(state.stderr + data);
     }
     triggerRef(runs);
+  }
+
+  function updateBatchProgress(progress: BatchProgressEvent): void {
+    if (progress.status === "completed" || progress.completed >= progress.total) {
+      batches.value.delete(progress.batchId);
+    } else {
+      batches.value.set(progress.batchId, progress);
+    }
+    triggerRef(batches);
   }
 
   function finishRun(runId: string, exitCode: number, duration: number): void {
@@ -56,6 +72,7 @@ export function useTerminal() {
     state.exitCode = exitCode;
     state.duration = duration;
     state.finished = true;
+    completedRunsVersion.value++;
     triggerRef(runs);
   }
 
@@ -70,8 +87,21 @@ export function useTerminal() {
 
   function clearAll(): void {
     runs.value = new Map();
+    batches.value = new Map();
     triggerRef(runs);
+    triggerRef(batches);
   }
 
-  return { runs, runList, hasRunningProcesses, addRun, appendOutput, finishRun, clearFinished, clearAll };
+  return {
+    runList,
+    activeBatches,
+    completedRunsVersion,
+    hasRunningProcesses,
+    addRun,
+    appendOutput,
+    updateBatchProgress,
+    finishRun,
+    clearFinished,
+    clearAll,
+  };
 }

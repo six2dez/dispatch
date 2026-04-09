@@ -1,8 +1,10 @@
 import { ref } from "vue";
 import type { ToolDetectionEntry } from "dispatch-backend";
+import type { CaidoSDK } from "../types";
 
 const detectionByToolId = ref<Map<string, ToolDetectionEntry>>(new Map());
 let lastDetectionTime = 0;
+let detectionRequestId = 0;
 
 export function useDetection() {
   function setDetectionResults(entries: ToolDetectionEntry[]): void {
@@ -29,5 +31,36 @@ export function useDetection() {
     return Date.now() - lastDetectionTime > 60000;
   }
 
-  return { detectionByToolId, setDetectionResults, isToolInstalled, getMissingBinaries, shouldRefresh };
+  function invalidateDetection(): void {
+    detectionRequestId++;
+    detectionByToolId.value = new Map();
+    lastDetectionTime = 0;
+  }
+
+  async function refreshDetection(
+    sdk: CaidoSDK,
+    force = false
+  ): Promise<ToolDetectionEntry[]> {
+    if (!force && !shouldRefresh() && detectionByToolId.value.size > 0) {
+      return Array.from(detectionByToolId.value.values());
+    }
+
+    const requestId = ++detectionRequestId;
+    const detection = await sdk.backend.detectTools();
+
+    if (requestId === detectionRequestId) {
+      setDetectionResults(detection.byToolId);
+      return detection.byToolId;
+    }
+
+    return Array.from(detectionByToolId.value.values());
+  }
+
+  return {
+    refreshDetection,
+    invalidateDetection,
+    isToolInstalled,
+    getMissingBinaries,
+    shouldRefresh,
+  };
 }

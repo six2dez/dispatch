@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import Button from "primevue/button";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
@@ -7,13 +7,16 @@ import Dialog from "primevue/dialog";
 import Textarea from "primevue/textarea";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useToolCatalog } from "../composables/useToolCatalog";
 import { useDetection } from "../composables/useDetection";
 import ToolEditorDialog from "./ToolEditorDialog.vue";
+import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
-const { setDetectionResults, isToolInstalled, getMissingBinaries } = useDetection();
+const { toolCatalog, refreshToolCatalog } = useToolCatalog();
+const { refreshDetection, invalidateDetection, isToolInstalled, getMissingBinaries } = useDetection();
 
-const tools = ref<ToolConfig[]>([]);
+const tools = computed(() => toolCatalog.value);
 const loading = ref(false);
 const importVisible = ref(false);
 const importJson = ref("");
@@ -22,9 +25,12 @@ const editorRef = ref<InstanceType<typeof ToolEditorDialog>>();
 async function loadTools(): Promise<void> {
   loading.value = true;
   try {
-    tools.value = await sdk.backend.getTools();
-  } catch {
-    sdk.window.showToast("Failed to load tools", { variant: "error" });
+    await refreshToolCatalog(sdk);
+  } catch (err: unknown) {
+    sdk.window.showToast(`Failed to load tools: ${getErrorMessage(err, "Could not load tools")}`, {
+      variant: "error",
+    });
+    throw err;
   } finally {
     loading.value = false;
   }
@@ -32,10 +38,34 @@ async function loadTools(): Promise<void> {
 
 async function detectTools(): Promise<void> {
   try {
-    const detection = await sdk.backend.detectTools();
-    setDetectionResults(detection.byToolId);
+    await refreshDetection(sdk, true);
+    sdk.window.showToast("Detection refreshed", { variant: "success", duration: 2000 });
   } catch (err: unknown) {
-    sdk.window.showToast(`Detection failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Detection failed: ${getErrorMessage(err, "Could not detect tools")}`, {
+      variant: "error",
+    });
+  }
+}
+
+async function syncStateAfterMutation(): Promise<void> {
+  await loadTools();
+  invalidateDetection();
+
+  try {
+    await refreshDetection(sdk, true);
+  } catch (err: unknown) {
+    sdk.window.showToast(`Detection failed: ${getErrorMessage(err, "Could not refresh tool detection")}`, {
+      variant: "error",
+    });
+  }
+}
+
+async function handleToolSaved(): Promise<void> {
+  try {
+    await syncStateAfterMutation();
+    sdk.window.showToast("Tool saved", { variant: "success", duration: 2000 });
+  } catch {
+    // loadTools already surfaced the error
   }
 }
 
@@ -50,18 +80,22 @@ function editTool(tool: ToolConfig): void {
 async function toggleTool(tool: ToolConfig): Promise<void> {
   try {
     await sdk.backend.saveTool({ ...tool, enabled: !tool.enabled });
-    await loadTools();
+    await syncStateAfterMutation();
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed: ${getErrorMessage(err, "Could not update the tool")}`, {
+      variant: "error",
+    });
   }
 }
 
 async function deleteTool(tool: ToolConfig): Promise<void> {
   try {
     await sdk.backend.deleteTool(tool.id);
-    await loadTools();
+    await syncStateAfterMutation();
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed: ${getErrorMessage(err, "Could not delete the tool")}`, {
+      variant: "error",
+    });
   }
 }
 
@@ -71,7 +105,9 @@ async function exportTools(): Promise<void> {
     await navigator.clipboard.writeText(json);
     sdk.window.showToast("Exported to clipboard", { variant: "success" });
   } catch (err: unknown) {
-    sdk.window.showToast(`Export failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Export failed: ${getErrorMessage(err, "Could not export the tools")}`, {
+      variant: "error",
+    });
   }
 }
 
@@ -81,21 +117,25 @@ async function importTools(): Promise<void> {
   importVisible.value = false;
   try {
     const result = await sdk.backend.importTools(json);
-    sdk.window.showToast(`Imported ${result.imported} tools`, { variant: "success" });
     importJson.value = "";
-    await loadTools();
+    await syncStateAfterMutation();
+    sdk.window.showToast(`Imported ${result.imported} tools`, { variant: "success" });
   } catch (err: unknown) {
-    sdk.window.showToast(`Import failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Import failed: ${getErrorMessage(err, "Could not import the tools")}`, {
+      variant: "error",
+    });
   }
 }
 
 async function resetToDefaults(): Promise<void> {
   try {
     await sdk.backend.resetToDefaults();
-    await loadTools();
+    await syncStateAfterMutation();
     sdk.window.showToast("Reset to defaults", { variant: "success" });
   } catch (err: unknown) {
-    sdk.window.showToast(`Reset failed: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Reset failed: ${getErrorMessage(err, "Could not reset the tools")}`, {
+      variant: "error",
+    });
   }
 }
 
@@ -110,34 +150,72 @@ function getToolStatus(toolId: string): { icon: string; cls: string; tooltip: st
   return { icon: "", cls: "", tooltip: "" };
 }
 
-onMounted(loadTools);
+onMounted(() => {
+  void loadTools();
+});
 </script>
 
 <template>
   <div class="settings-panel">
     <div class="settings-toolbar">
-      <Button label="Add Tool" icon="fas fa-plus" severity="primary" size="small" @click="addTool" />
-      <Button label="Detect Tools" icon="fas fa-search" severity="secondary" size="small" @click="detectTools" />
-      <Button label="Export" icon="fas fa-download" severity="secondary" size="small" @click="exportTools" />
-      <Button label="Import" icon="fas fa-upload" severity="secondary" size="small" @click="importVisible = true" />
-      <Button label="Reset to Defaults" severity="danger" size="small" text @click="resetToDefaults" />
+      <Button
+        label="Add Tool"
+        icon="fas fa-plus"
+        severity="primary"
+        size="small"
+        @click="addTool"
+      />
+      <Button
+        label="Detect Tools"
+        icon="fas fa-search"
+        severity="secondary"
+        size="small"
+        @click="detectTools"
+      />
+      <Button
+        label="Export"
+        icon="fas fa-download"
+        severity="secondary"
+        size="small"
+        @click="exportTools"
+      />
+      <Button
+        label="Import"
+        icon="fas fa-upload"
+        severity="secondary"
+        size="small"
+        @click="importVisible = true"
+      />
+      <Button
+        label="Reset to Defaults"
+        severity="danger"
+        size="small"
+        text
+        @click="resetToDefaults"
+      />
     </div>
 
     <DataTable
       :value="tools"
       :loading="loading"
-      stripedRows
+      striped-rows
       size="small"
-      rowGroupMode="subheader"
-      groupRowsBy="group"
-      :rowClass="(data: ToolConfig) => !data.enabled ? 'row-disabled' : ''"
+      row-group-mode="subheader"
+      group-rows-by="group"
+      :row-class="(data: ToolConfig) => !data.enabled ? 'row-disabled' : ''"
     >
-      <Column field="group" header="Group" />
+      <Column
+        field="group"
+        header="Group"
+      />
       <template #groupheader="{ data }">
         <span class="group-header">{{ (data as ToolConfig).group || "Other" }}</span>
       </template>
 
-      <Column header="" style="width: 30px">
+      <Column
+        header=""
+        style="width: 30px"
+      >
         <template #body="{ data }">
           <span
             :class="getToolStatus((data as ToolConfig).id).cls"
@@ -149,19 +227,37 @@ onMounted(loadTools);
         </template>
       </Column>
 
-      <Column field="name" header="Name" />
-      <Column field="command" header="Command">
+      <Column
+        field="name"
+        header="Name"
+      />
+      <Column
+        field="command"
+        header="Command"
+      >
         <template #body="{ data }">
-          <code class="tool-command" :title="(data as ToolConfig).command">
+          <code
+            class="tool-command"
+            :title="(data as ToolConfig).command"
+          >
             {{ (data as ToolConfig).command }}
           </code>
         </template>
       </Column>
 
-      <Column header="Actions" style="width: 220px">
+      <Column
+        header="Actions"
+        style="width: 220px"
+      >
         <template #body="{ data }">
           <div class="tool-actions">
-            <Button label="Edit" size="small" severity="secondary" text @click="editTool(data as ToolConfig)" />
+            <Button
+              label="Edit"
+              size="small"
+              severity="secondary"
+              text
+              @click="editTool(data as ToolConfig)"
+            />
             <Button
               :label="(data as ToolConfig).enabled ? 'Disable' : 'Enable'"
               size="small"
@@ -169,23 +265,51 @@ onMounted(loadTools);
               text
               @click="toggleTool(data as ToolConfig)"
             />
-            <Button label="Del" size="small" severity="danger" text @click="deleteTool(data as ToolConfig)" />
+            <Button
+              label="Del"
+              size="small"
+              severity="danger"
+              text
+              @click="deleteTool(data as ToolConfig)"
+            />
           </div>
         </template>
       </Column>
     </DataTable>
 
     <!-- Import Dialog -->
-    <Dialog v-model:visible="importVisible" modal header="Import Tools" :style="{ width: '500px' }">
-      <Textarea v-model="importJson" placeholder="Paste exported JSON here..." rows="8" class="import-textarea" />
+    <Dialog
+      v-model:visible="importVisible"
+      modal
+      header="Import Tools"
+      :style="{ width: '500px' }"
+    >
+      <Textarea
+        v-model="importJson"
+        placeholder="Paste exported JSON here..."
+        rows="8"
+        class="import-textarea"
+      />
       <template #footer>
-        <Button label="Cancel" severity="secondary" text @click="importVisible = false" />
-        <Button label="Import" severity="primary" @click="importTools" />
+        <Button
+          label="Cancel"
+          severity="secondary"
+          text
+          @click="importVisible = false"
+        />
+        <Button
+          label="Import"
+          severity="primary"
+          @click="importTools"
+        />
       </template>
     </Dialog>
 
     <!-- Tool Editor -->
-    <ToolEditorDialog ref="editorRef" @saved="loadTools" />
+    <ToolEditorDialog
+      ref="editorRef"
+      @saved="handleToolSaved"
+    />
   </div>
 </template>
 

@@ -14,6 +14,7 @@ import PreviewDialog from "./components/PreviewDialog.vue";
 import CustomCommandDialog from "./components/CustomCommandDialog.vue";
 import type { ToolConfig, PlaceholderPreview } from "dispatch-backend";
 import { useSdk } from "./composables/useSdk";
+import { getErrorMessage } from "./utils/errors";
 
 type StorageData = { activeTab?: string };
 
@@ -51,7 +52,10 @@ function handleToolSelected(tool: ToolConfig, requestIds: string[]): void {
         previewDialog.value?.open(tool, preview, requestIds);
       })
       .catch((err: unknown) => {
-        sdk.window.showToast(`Preview failed: ${err}`, { variant: "error", duration: 5000 });
+        sdk.window.showToast(`Preview failed: ${getErrorMessage(err, "Could not resolve the preview")}`, {
+          variant: "error",
+          duration: 5000,
+        });
       });
   } else {
     // Execute directly without preview
@@ -62,7 +66,10 @@ function handleToolSelected(tool: ToolConfig, requestIds: string[]): void {
     promise
       .then(() => sdk.navigation.goTo("/dispatch"))
       .catch((err: unknown) => {
-        sdk.window.showToast(`Execute failed: ${err}`, { variant: "error", duration: 5000 });
+        sdk.window.showToast(`Execute failed: ${getErrorMessage(err, "Could not start the command")}`, {
+          variant: "error",
+          duration: 5000,
+        });
       });
   }
 }
@@ -82,24 +89,48 @@ defineExpose({ openPicker, dispatchTool });
 
 <template>
   <div class="dispatch-app">
-    <Tabs :value="activeTab" class="dispatch-tabs" @update:value="onTabChange">
+    <Tabs
+      :value="activeTab"
+      class="dispatch-tabs"
+      @update:value="onTabChange"
+    >
       <TabList>
-        <Tab value="terminal">Terminal</Tab>
-        <Tab value="settings">Settings</Tab>
-        <Tab value="history">History</Tab>
-        <Tab value="help">Help</Tab>
+        <Tab value="terminal">
+          Terminal
+        </Tab>
+        <Tab value="settings">
+          Settings
+        </Tab>
+        <Tab value="history">
+          History
+        </Tab>
+        <Tab value="help">
+          Help
+        </Tab>
       </TabList>
       <TabPanels class="dispatch-panels">
-        <TabPanel value="terminal" class="dispatch-panel">
+        <TabPanel
+          value="terminal"
+          class="dispatch-panel"
+        >
           <TerminalPanel />
         </TabPanel>
-        <TabPanel value="settings" class="dispatch-panel">
+        <TabPanel
+          value="settings"
+          class="dispatch-panel"
+        >
           <SettingsPanel />
         </TabPanel>
-        <TabPanel value="history" class="dispatch-panel">
+        <TabPanel
+          value="history"
+          class="dispatch-panel"
+        >
           <HistoryPanel />
         </TabPanel>
-        <TabPanel value="help" class="dispatch-panel">
+        <TabPanel
+          value="help"
+          class="dispatch-panel"
+        >
           <HelpPanel />
         </TabPanel>
       </TabPanels>

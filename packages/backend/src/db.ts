@@ -34,6 +34,18 @@ function sqlEscape(s: string): string {
   return s.replace(/'/g, "''");
 }
 
+function buildSqlStringList(values: string[]): string {
+  return values.map((value) => `'${sqlEscape(value)}'`).join(", ");
+}
+
+function normalizeHistoryLimit(limit?: number): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isFinite(limit)) {
+    throw new Error("History limit must be a finite number");
+  }
+  return Math.max(1, Math.min(Math.floor(limit), 5000));
+}
+
 // --- Query abstraction ---
 // Caido's sdk.meta.db() may expose different APIs across versions.
 // We probe once at init and cache the working method.
@@ -287,8 +299,23 @@ export async function deleteToolById(id: string): Promise<void> {
 
 export async function updateToolOrder(ids: string[]): Promise<void> {
   const db = await getDb();
-  for (let i = 0; i < ids.length; i++) {
-    await sqlRun(db, `UPDATE tools SET sort_order = ${i} WHERE id = '${sqlEscape(ids[i]!)}'`);
+  const normalizedIds = ids.map((id) => id.trim());
+
+  if (normalizedIds.some((id) => id.length === 0)) {
+    throw new Error("Tool order contains empty IDs");
+  }
+  if (new Set(normalizedIds).size !== normalizedIds.length) {
+    throw new Error("Tool order contains duplicate IDs");
+  }
+  if (normalizedIds.length === 0) return;
+
+  const rows = await query(db, `SELECT id FROM tools WHERE id IN (${buildSqlStringList(normalizedIds)})`);
+  if (rows.length !== normalizedIds.length) {
+    throw new Error("Tool order contains unknown tool IDs");
+  }
+
+  for (let i = 0; i < normalizedIds.length; i++) {
+    await sqlRun(db, `UPDATE tools SET sort_order = ${i} WHERE id = '${sqlEscape(normalizedIds[i]!)}'`);
   }
 }
 
@@ -338,8 +365,9 @@ export async function updateHistoryEntry(
 
 export async function getHistoryEntries(limit?: number): Promise<RunEntry[]> {
   const db = await getDb();
-  const sql = limit !== undefined
-    ? `SELECT * FROM history ORDER BY started_at DESC LIMIT ${limit}`
+  const safeLimit = normalizeHistoryLimit(limit);
+  const sql = safeLimit !== undefined
+    ? `SELECT * FROM history ORDER BY started_at DESC LIMIT ${safeLimit}`
     : "SELECT * FROM history ORDER BY started_at DESC";
   const rows = await query(db, sql);
   return rows.map(rowToRunEntry);

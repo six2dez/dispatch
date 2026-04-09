@@ -7,6 +7,7 @@ import Textarea from "primevue/textarea";
 import Checkbox from "primevue/checkbox";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
 const emit = defineEmits<{ saved: [] }>();
@@ -20,6 +21,14 @@ const group = ref("");
 const showPreview = ref(true);
 const enabled = ref(true);
 const detectionBinary = ref("");
+
+function generateToolId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `custom-${crypto.randomUUID()}`;
+  }
+
+  return `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
 
 function open(tool: ToolConfig | undefined): void {
   existingTool.value = tool;
@@ -43,7 +52,7 @@ async function save(): Promise<void> {
   saving.value = true;
   const detBin = detectionBinary.value.trim();
   const tool: ToolConfig = {
-    id: existingTool.value?.id ?? `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: existingTool.value?.id ?? generateToolId(),
     name: n,
     command: c,
     group: group.value.trim(),
@@ -58,7 +67,9 @@ async function save(): Promise<void> {
     visible.value = false;
     emit("saved");
   } catch (err: unknown) {
-    sdk.window.showToast(`Failed to save: ${err}`, { variant: "error" });
+    sdk.window.showToast(`Failed to save: ${getErrorMessage(err, "Could not save the tool")}`, {
+      variant: "error",
+    });
   } finally {
     saving.value = false;
   }
@@ -77,38 +88,70 @@ defineExpose({ open });
     <div class="editor-form">
       <div class="editor-field">
         <label>Name</label>
-        <InputText v-model="name" placeholder="Tool name" />
+        <InputText
+          v-model="name"
+          placeholder="Tool name"
+        />
       </div>
 
       <div class="editor-field">
         <label>Command</label>
-        <Textarea v-model="command" placeholder="e.g. sqlmap -u %U --batch" rows="3" autoResize />
+        <Textarea
+          v-model="command"
+          placeholder="e.g. sqlmap -u %U --batch"
+          rows="3"
+          auto-resize
+        />
       </div>
 
       <div class="editor-field">
         <label>Group</label>
-        <InputText v-model="group" placeholder="Category name" />
+        <InputText
+          v-model="group"
+          placeholder="Category name"
+        />
       </div>
 
       <div class="editor-field">
         <label>Detection binary (optional)</label>
-        <InputText v-model="detectionBinary" placeholder="Binary name for detection" />
+        <InputText
+          v-model="detectionBinary"
+          placeholder="Binary name for detection"
+        />
       </div>
 
       <div class="editor-toggle">
-        <Checkbox v-model="showPreview" :binary="true" inputId="showPreview" />
+        <Checkbox
+          v-model="showPreview"
+          :binary="true"
+          input-id="showPreview"
+        />
         <label for="showPreview">Show preview before run</label>
       </div>
 
       <div class="editor-toggle">
-        <Checkbox v-model="enabled" :binary="true" inputId="enabled" />
+        <Checkbox
+          v-model="enabled"
+          :binary="true"
+          input-id="enabled"
+        />
         <label for="enabled">Enabled</label>
       </div>
     </div>
 
     <template #footer>
-      <Button label="Cancel" severity="secondary" text @click="visible = false" />
-      <Button label="Save" severity="primary" :loading="saving" @click="save" />
+      <Button
+        label="Cancel"
+        severity="secondary"
+        text
+        @click="visible = false"
+      />
+      <Button
+        label="Save"
+        severity="primary"
+        :loading="saving"
+        @click="save"
+      />
     </template>
   </Dialog>
 </template>

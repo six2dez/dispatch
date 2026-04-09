@@ -9,6 +9,7 @@ import { insertHistoryEntry, updateHistoryEntry } from "./db";
 type PluginSDK = SDK<API, Events>;
 
 const IS_MAC = platform() === "darwin";
+const USE_PROCESS_GROUPS = platform() !== "win32";
 const MAX_STORED_OUTPUT = 512 * 1024; // 512KB per stream
 const MAX_CONCURRENT = 10;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
@@ -31,6 +32,10 @@ export function getActiveCount(): number {
   return activeProcesses.size;
 }
 
+export function getMaxConcurrent(): number {
+  return MAX_CONCURRENT;
+}
+
 export function isAtCapacity(): boolean {
   return activeProcesses.size >= MAX_CONCURRENT;
 }
@@ -39,35 +44,43 @@ export function isAtCapacity(): boolean {
 function spawnWithLoginShell(command: string): ChildProcess {
   try {
     if (IS_MAC) {
-      return spawn("/bin/zsh", ["-lc", command]);
+      return spawn("/bin/zsh", ["-lc", command], { detached: USE_PROCESS_GROUPS });
     }
-    return spawn("/bin/bash", ["-lc", command]);
+    return spawn("/bin/bash", ["-lc", command], { detached: USE_PROCESS_GROUPS });
   } catch {
-    return spawn("sh", ["-c", command]);
+    return spawn("sh", ["-c", command], { detached: USE_PROCESS_GROUPS });
   }
 }
 
 // Kill entire process tree — not just the shell
-// Uses shell commands to kill the process group, avoiding orphans from pipes
-function killProcessTree(child: ChildProcess, signal: string): void {
+function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
   const pid = child.pid;
   if (pid === undefined) {
-    child.kill();
+    child.kill(signal);
     return;
   }
 
-  // Use shell to kill the process group and children
-  // kill -- -PID sends signal to entire process group
-  // pkill -P as fallback kills direct children
-  try {
-    spawn("sh", ["-c", `kill -s ${signal} -- -${pid} 2>/dev/null || (pkill -${signal} -P ${pid} 2>/dev/null; kill -s ${signal} ${pid} 2>/dev/null)`]);
-  } catch {
+  if (USE_PROCESS_GROUPS) {
     try {
-      child.kill();
+      process.kill(-pid, signal);
+      return;
     } catch {
-      // Process already dead
+      // Fall through to direct child termination if the process group no longer exists.
     }
   }
+
+  try {
+    child.kill(signal);
+  } catch {
+    // Process already dead
+  }
+}
+
+function appendOutputChunk(buffer: string, chunk: string): string {
+  const next = buffer + chunk;
+  return next.length > MAX_STORED_OUTPUT
+    ? next.slice(-MAX_STORED_OUTPUT)
+    : next;
 }
 
 function spawnAndTrack(
@@ -82,6 +95,7 @@ function spawnAndTrack(
 ): void {
   if (isAtCapacity()) {
     logError(`Max concurrent processes (${MAX_CONCURRENT}) reached, rejecting ${runId}`);
+    cleanupTempFiles(tempFiles);
     updateHistoryEntry(runId, {
       status: "error",
       stderr: `Rejected: max concurrent processes (${MAX_CONCURRENT}) reached`,
@@ -105,44 +119,61 @@ function spawnAndTrack(
 
   let stdoutBuf = "";
   let stderrBuf = "";
+  let finalized = false;
 
-  child.stdout?.on("data", (data) => {
-    const chunk = data.toString();
-    stdoutBuf += chunk;
-    if (stdoutBuf.length > MAX_STORED_OUTPUT) {
-      stdoutBuf = stdoutBuf.slice(-MAX_STORED_OUTPUT);
+  function finalize(exitCode: number, status: "completed" | "error" | "killed", errorMessage?: string): void {
+    if (finalized) return;
+    finalized = true;
+
+    if (errorMessage) {
+      stderrBuf = appendOutputChunk(stderrBuf, `${errorMessage}\n`);
+      sdk.api.send("terminal:output", { runId, data: `${errorMessage}\n`, stream: "stderr" as const });
     }
-    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stdout" as const });
-  });
 
-  child.stderr?.on("data", (data) => {
-    const chunk = data.toString();
-    stderrBuf += chunk;
-    if (stderrBuf.length > MAX_STORED_OUTPUT) {
-      stderrBuf = stderrBuf.slice(-MAX_STORED_OUTPUT);
-    }
-    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stderr" as const });
-  });
-
-  child.on("close", (exitCode: number | null) => {
     const finishedAt = new Date().toISOString();
     const duration = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
-    const wasKilled = killedRunIds.has(runId);
     killedRunIds.delete(runId);
     activeProcesses.delete(runId);
 
     updateHistoryEntry(runId, {
       stdout: stdoutBuf,
       stderr: stderrBuf,
-      exitCode: exitCode ?? -1,
-      status: wasKilled ? "killed" : "completed",
+      exitCode,
+      status,
       finishedAt,
     }).catch((e) => logError(`updateHistoryEntry failed: ${e}`));
 
-    sdk.api.send("terminal:exit", { runId, exitCode: exitCode ?? -1, duration });
+    sdk.api.send("terminal:exit", { runId, exitCode, duration });
 
     cleanupTempFiles(tempFiles);
     onClose?.();
+  }
+
+  child.stdout?.on("data", (data) => {
+    const chunk = data.toString();
+    stdoutBuf = appendOutputChunk(stdoutBuf, chunk);
+    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stdout" as const });
+  });
+
+  child.stderr?.on("data", (data) => {
+    const chunk = data.toString();
+    stderrBuf = appendOutputChunk(stderrBuf, chunk);
+    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stderr" as const });
+  });
+
+  child.on("close", (exitCode: number | null) => {
+    const wasKilled = killedRunIds.has(runId);
+    const finalExitCode = exitCode ?? -1;
+    const status = wasKilled
+      ? "killed"
+      : finalExitCode === 0
+        ? "completed"
+        : "error";
+    finalize(finalExitCode, status);
+  });
+
+  child.on("error", (error) => {
+    finalize(-1, "error", error.message);
   });
 }
 
@@ -215,12 +246,12 @@ export function killActiveProcess(runId: string): boolean {
   if (!proc) return false;
 
   killedRunIds.add(runId);
-  killProcessTree(proc, "TERM");
+  killProcessTree(proc, "SIGTERM");
 
   // Fallback to SIGKILL after 5s if process still alive
   setTimeout(() => {
     if (activeProcesses.has(runId)) {
-      killProcessTree(proc, "KILL");
+      killProcessTree(proc, "SIGKILL");
     }
   }, 5000);
 

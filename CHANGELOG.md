@@ -12,7 +12,7 @@
 ### Added
 
 - **Caido native CSS variables.** UI uses `--c-bg-default`, `--c-fg-default`, `--c-border-default`, `--c-primary` etc. for automatic theme adaptation.
-- **Process group killing.** Kill button terminates the entire process tree (pipes, subprocesses), not just the parent shell. Uses `kill -- -PID` with `pkill -P` fallback.
+- **Process group killing.** Kill button terminates the entire process tree (pipes, subprocesses), not just the parent shell. Uses detached login shells plus negative-PID signaling where supported, with direct child termination fallback.
 - **Binary-safe file placeholders.** `%R` uses `toBytes()` and `%B` uses `toRaw()` to preserve exact bytes. Non-UTF-8 and binary request bodies are no longer corrupted.
 - **Batch progress events.** Backend emits `batch:progress` events with `{ batchId, completed, total, currentRunId, status }`.
 - **Batch resilience.** Batch execution continues on individual request failure instead of breaking the chain.
@@ -21,9 +21,9 @@
 - **New presets:** x8 (param discovery), gospider (crawling), nuclei request file mode, LinkFinder (JS analysis).
 - **Caido Findings integration.** Create a Caido Finding from any completed run, linking the original request and output.
 - **Shell environment variables.** Command templates support `$VAR` and `${VAR}` syntax natively since commands run in a login shell.
-- **UI state persistence.** Active tab and history filters saved via `sdk.storage`, surviving page navigation.
+- **UI state persistence.** Active tab is saved via `sdk.storage`, surviving page navigation.
 - **Richer tool detection.** Tools with pipelines detect all required binaries. Missing binary name shown in tooltip.
-- **ESLint configuration.** Added linting with `pnpm lint`. Release CI runs typecheck before build.
+- **ESLint workflow.** `pnpm run lint` is available, the lint baseline is clean, and release CI runs typecheck before build.
 - **Per-tool context menu entries.** Each enabled tool gets its own "Dispatch: toolname" entry in the right-click menu and command palette for one-click dispatch without the picker.
 
 ### Changed
@@ -40,9 +40,11 @@
 - **`%A` trailing slash bug.** `/api/` and `/api` are different endpoints; the path is now preserved as-is.
 - **Silent error swallowing.** Frontend catches replaced with error toasts in History, Settings, and batch execution.
 - **Kill orphan processes.** Pipeline commands (`subfinder | httpx`, sqlmap subprocesses) are now killed as a group.
+- **Quick-dispatch drift.** Per-tool context menu and command-palette entries now stay in sync with Settings changes without reloading the plugin.
 - **Dark mode.** PrimeVue dark mode with theme bridge remapping `--p-surface-*` to Caido's `--c-*` native CSS variables.
 - **Preview dialog sizing.** Dialog now opens at 800px width consistently; textarea no longer auto-resizes causing layout jumps.
 - **Settings panel scroll.** All tabs now scroll when content overflows.
+- **History freshness.** Completed runs now surface in History automatically as they finish.
 - **Frontend performance.** Terminal uses `shallowRef` + in-place mutation (no Map clone per output chunk). History filters client-side without re-fetching. Picker uses O(1) index map instead of O(N^2) indexOf.
 
 ## 0.1.0

@@ -5,7 +5,9 @@
 <template>
   <div class="help-panel">
     <section class="help-section">
-      <h2 class="help-heading">Quick Start</h2>
+      <h2 class="help-heading">
+        Quick Start
+      </h2>
       <ol class="help-steps">
         <li>Right-click on a request row (or multiple) in the HTTP history</li>
         <li>Click <strong>Dispatch...</strong> and pick a tool from the list</li>
@@ -13,13 +15,17 @@
       </ol>
       <p class="help-note">
         Output streams in real-time in the <strong>Terminal</strong> tab.
-        You can kill a running process with the Kill button.
+        You can kill a running process with the Kill button, and multi-request batches show live progress while they run.
       </p>
     </section>
 
     <section class="help-section">
-      <h2 class="help-heading">Placeholders</h2>
-      <p class="help-note">Use these in command templates. They are resolved per-request before execution.</p>
+      <h2 class="help-heading">
+        Placeholders
+      </h2>
+      <p class="help-note">
+        Use these in command templates. They are resolved per-request before execution.
+      </p>
       <table class="help-table">
         <thead>
           <tr><th>Placeholder</th><th>Description</th><th>Example</th></tr>
@@ -47,7 +53,9 @@
     </section>
 
     <section class="help-section">
-      <h2 class="help-heading">Keyboard Shortcuts</h2>
+      <h2 class="help-heading">
+        Keyboard Shortcuts
+      </h2>
       <table class="help-table">
         <thead>
           <tr><th>Context</th><th>Key</th><th>Action</th></tr>
@@ -65,22 +73,32 @@
     </section>
 
     <section class="help-section">
-      <h2 class="help-heading">Creating Custom Tools</h2>
-      <p class="help-note">Go to <strong>Settings</strong> &rarr; <strong>Add Tool</strong>:</p>
+      <h2 class="help-heading">
+        Creating Custom Tools
+      </h2>
+      <p class="help-note">
+        Go to <strong>Settings</strong> &rarr; <strong>Add Tool</strong>:
+      </p>
       <ul class="help-list">
         <li><strong>Name</strong> &mdash; displayed in the picker</li>
         <li><strong>Command</strong> &mdash; template with placeholders</li>
         <li><strong>Group</strong> &mdash; category for grouping</li>
         <li><strong>Show preview</strong> &mdash; show resolved command before running</li>
       </ul>
+      <p class="help-note">
+        Quick-dispatch entries update automatically after you add, edit, disable, or delete a tool in Settings.
+      </p>
     </section>
 
     <section class="help-section">
-      <h2 class="help-heading">Multi-select</h2>
+      <h2 class="help-heading">
+        Multi-select
+      </h2>
       <p class="help-note">
         Select multiple request rows before clicking <strong>Dispatch...</strong>.
         The tool runs once per request, sequentially. The preview shows the first request;
-        edits to flags apply to all, but request-specific placeholders are re-resolved for each.
+        edits to flags apply to all, but request-specific placeholders are re-resolved for each. Completed runs also appear in
+        <strong>History</strong> automatically as they finish.
       </p>
     </section>
   </div>

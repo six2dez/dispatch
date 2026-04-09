@@ -1,10 +1,13 @@
-import { createApp } from "vue";
+import { createApp, watch } from "vue";
 import PrimeVue from "primevue/config";
 import Aura from "@primevue/themes/aura";
+import type { ToolConfig } from "dispatch-backend";
 import type { CaidoSDK } from "./types";
 import App from "./App.vue";
 import { sdkKey } from "./composables/useSdk";
 import { useTerminal } from "./composables/useTerminal";
+import { useToolCatalog } from "./composables/useToolCatalog";
+import { getErrorMessage } from "./utils/errors";
 import "./styles/index.css";
 
 const Page = "/dispatch" as const;
@@ -28,6 +31,9 @@ function extractRequestIds(context: Record<string, unknown>): string[] {
 }
 
 export const init = (sdk: CaidoSDK) => {
+  const { toolCatalog, getToolById, refreshToolCatalog } = useToolCatalog();
+  const { addRun, appendOutput, updateBatchProgress, finishRun } = useTerminal();
+  const registeredQuickDispatchCommands = new Set<string>();
   const root = document.createElement("div");
   root.style.height = "100%";
   root.classList.add("p-dark");
@@ -86,25 +92,43 @@ export const init = (sdk: CaidoSDK) => {
 
   sdk.commandPalette.register("dispatch-open");
 
-  // Register per-tool quick dispatch commands
-  sdk.backend.getTools().then((tools) => {
-    for (const tool of tools) {
-      if (!tool.enabled) continue;
+  function isQuickDispatchAvailable(toolId: string, context: Record<string, unknown>): boolean {
+    return extractRequestIds(context).length > 0 && Boolean(getToolById(toolId)?.enabled);
+  }
 
+  function runQuickDispatch(toolId: string, context: Record<string, unknown>): void {
+    const requestIds = extractRequestIds(context);
+    if (requestIds.length === 0) {
+      sdk.window.showToast("No request ID found in context", { variant: "warning", duration: 3000 });
+      return;
+    }
+
+    const tool = getToolById(toolId);
+    if (!tool || !tool.enabled) {
+      sdk.window.showToast("This tool is no longer available. Refresh the settings and try again.", {
+        variant: "warning",
+        duration: 4000,
+      });
+      return;
+    }
+
+    appInstance.dispatchTool(tool, requestIds);
+  }
+
+  function syncQuickDispatchCommands(tools: readonly ToolConfig[]): void {
+    for (const tool of tools) {
       const cmdId = `dispatch-tool-${tool.id}`;
 
       sdk.commands.register(cmdId, {
         name: `Dispatch: ${tool.name}`,
-        run: (context) => {
-          const requestIds = extractRequestIds(context as Record<string, unknown>);
-          if (requestIds.length === 0) {
-            sdk.window.showToast("No request ID found in context", { variant: "warning", duration: 3000 });
-            return;
-          }
-          appInstance.dispatchTool(tool, requestIds);
-        },
+        run: (context) => runQuickDispatch(tool.id, context as Record<string, unknown>),
         group: "Dispatch",
+        when: (context) => isQuickDispatchAvailable(tool.id, context as Record<string, unknown>),
       });
+
+      if (registeredQuickDispatchCommands.has(cmdId)) {
+        continue;
+      }
 
       sdk.menu.registerItem({
         type: "RequestRow",
@@ -113,12 +137,22 @@ export const init = (sdk: CaidoSDK) => {
       });
 
       sdk.commandPalette.register(cmdId);
+      registeredQuickDispatchCommands.add(cmdId);
     }
+  }
+
+  watch(toolCatalog, (tools) => {
+    syncQuickDispatchCommands(tools);
+  }, { immediate: true });
+
+  void refreshToolCatalog(sdk).catch((err: unknown) => {
+    sdk.window.showToast(`Failed to load tools: ${getErrorMessage(err, "Could not load tools")}`, {
+      variant: "error",
+      duration: 5000,
+    });
   });
 
   // Terminal event handlers
-  const { addRun, appendOutput, finishRun } = useTerminal();
-
   sdk.backend.onEvent("terminal:start", (event) => {
     const e = event as {
       runId: string;
@@ -139,6 +173,17 @@ export const init = (sdk: CaidoSDK) => {
   sdk.backend.onEvent("terminal:output", (event) => {
     const e = event as { runId: string; data: string; stream: "stdout" | "stderr" };
     appendOutput(e.runId, e.data, e.stream);
+  });
+
+  sdk.backend.onEvent("batch:progress", (event) => {
+    updateBatchProgress(event as {
+      batchId: string;
+      completed: number;
+      total: number;
+      currentRunId: string;
+      currentRequestId: string;
+      status: "running" | "completed" | "failed";
+    });
   });
 
   sdk.backend.onEvent("terminal:exit", (event) => {

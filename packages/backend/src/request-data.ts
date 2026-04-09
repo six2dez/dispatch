@@ -97,19 +97,39 @@ const MULTI_PART_TLDS = new Set([
   "com.pk", "org.pk", "net.pk",
 ]);
 
+function isIPv4Host(host: string): boolean {
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+
+  return octets.every((octet) => {
+    if (!/^\d{1,3}$/.test(octet)) return false;
+    const value = Number(octet);
+    return value >= 0 && value <= 255;
+  });
+}
+
+function isIPv6Host(host: string): boolean {
+  const normalized = host.startsWith("[") && host.endsWith("]")
+    ? host.slice(1, -1)
+    : host;
+  return normalized.includes(":");
+}
+
 function extractRootDomain(host: string): string {
-  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host === "localhost") {
+  const normalizedHost = host.toLowerCase();
+
+  if (isIPv4Host(normalizedHost) || isIPv6Host(normalizedHost) || normalizedHost === "localhost") {
     return host;
   }
 
-  const parts = host.split(".");
-  if (parts.length <= 2) return host;
+  const parts = normalizedHost.split(".");
+  if (parts.length <= 2) return normalizedHost;
 
   const lastTwo = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
   if (MULTI_PART_TLDS.has(lastTwo)) {
     return parts.length >= 3
       ? parts.slice(-3).join(".")
-      : host;
+      : normalizedHost;
   }
 
   return parts.slice(-2).join(".");
