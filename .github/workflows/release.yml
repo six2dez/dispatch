@@ -2,6 +2,9 @@ name: "Release"
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
 
 env:
   NODE_VERSION: 20
@@ -15,32 +18,66 @@ jobs:
       contents: write
 
     steps:
-      - name: Verify main branch
-        run: |
-          if [[ "${{ github.ref_name }}" != "main" ]]; then
-            echo "Release can only be done on the main branch."
-            exit 1
-          fi
-
       - name: Checkout project
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check version
+      - name: Resolve version
         id: meta
         run: |
-          VERSION=$(jq -r .version manifest.json)
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          MANIFEST_VERSION=$(jq -r .version manifest.json)
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "${TAG_VERSION}" != "${MANIFEST_VERSION}" ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest.json version ${MANIFEST_VERSION}"
+              exit 1
+            fi
+            VERSION="${TAG_VERSION}"
+            TAG="${GITHUB_REF_NAME}"
+          else
+            if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+              echo "::error::Manual release must run on main branch"
+              exit 1
+            fi
+            VERSION="${MANIFEST_VERSION}"
+            TAG="v${MANIFEST_VERSION}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          {
+            echo 'body<<CHANGELOG_EOF'
+            awk -v v="${VERSION}" '
+              /^## / {
+                if (found) { exit }
+                if ($0 ~ "^## " v "( |$)") { found=1; next }
+              }
+              found { print }
+            ' CHANGELOG.md | sed -e :a -e '/./,$!d;/^\n*$/{$d;N;ba' -e '}'
+            echo 'CHANGELOG_EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
 
       - name: Typecheck
         run: pnpm typecheck
@@ -50,19 +87,30 @@ jobs:
 
       - name: Sign package
         working-directory: dist
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
         run: |
-          if [[ -z "${{ secrets.PRIVATE_KEY }}" ]]; then
-            echo "Set an ed25519 key as PRIVATE_KEY in GitHub Action secret to sign."
-          else
-            echo "${{ secrets.PRIVATE_KEY }}" > private_key.pem
-            openssl pkeyutl -sign -inkey private_key.pem -out dispatch.zip.sig -rawin -in dispatch.zip
-            rm private_key.pem
+          if [[ -z "${PRIVATE_KEY}" ]]; then
+            echo "::warning::PRIVATE_KEY secret missing — release will be unsigned"
+            exit 0
+          fi
+          printf '%s' "${PRIVATE_KEY}" > private_key.pem
+          openssl pkeyutl -sign -inkey private_key.pem -out dispatch.zip.sig -rawin -in dispatch.zip
+          rm -f private_key.pem
+
+      - name: Publish public key
+        run: |
+          if [[ -f public.pem ]]; then
+            cp public.pem dist/public.pem
           fi
 
       - name: Create release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ steps.meta.outputs.version }}
+          tag: ${{ steps.meta.outputs.tag }}
           commit: ${{ github.sha }}
-          body: "Release ${{ steps.meta.outputs.version }}"
-          artifacts: "dist/dispatch.zip,dist/dispatch.zip.sig"
+          name: ${{ steps.meta.outputs.tag }}
+          body: ${{ steps.changelog.outputs.body }}
+          artifacts: "dist/dispatch.zip,dist/dispatch.zip.sig,dist/public.pem"
+          allowUpdates: true
+          artifactErrorsFailBuild: true

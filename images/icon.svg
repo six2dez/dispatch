@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Dispatch plugin icon">
+  <title>Dispatch</title>
+  <rect x="6" y="12" width="34" height="28" rx="3"/>
+  <polyline points="13,22 19,28 13,34"/>
+  <line x1="24" y1="34" x2="34" y2="34"/>
+  <path d="M40 26 L54 26 M50 21 L55 26 L50 31"/>
+  <circle cx="54" cy="48" r="5"/>
+  <path d="M50.5 44.5 L46 40"/>
+</svg>

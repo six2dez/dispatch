@@ -22,6 +22,18 @@ async function pack() {
   // Add manifest
   zip.file("manifest.json", readFileSync("manifest.json"));
 
+  // Add plugin icon if declared in the manifest and present on disk
+  const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
+  if (manifest.icon) {
+    const iconCandidates = [manifest.icon, join("images", manifest.icon)];
+    const iconPath = iconCandidates.find((p) => existsSync(p));
+    if (iconPath) {
+      zip.file(manifest.icon, readFileSync(iconPath));
+    } else {
+      console.warn(`Manifest declares icon "${manifest.icon}" but no matching file was found.`);
+    }
+  }
+
   // Add dist files
   if (existsSync("dist")) {
     addDirToZip(zip, "dist", "");

@@ -1,10 +1,33 @@
 {
   "name": "dispatch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Send HTTP requests to external CLI tools from Caido",
   "author": "six2dez",
   "license": "MIT",
   "type": "module",
+  "homepage": "https://github.com/six2dez/dispatch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/six2dez/dispatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/six2dez/dispatch/issues"
+  },
+  "keywords": [
+    "caido",
+    "caido-plugin",
+    "security",
+    "pentesting",
+    "bug-bounty",
+    "sqlmap",
+    "ffuf",
+    "nuclei",
+    "dalfox"
+  ],
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
   "scripts": {
     "build": "pnpm run clean && pnpm -r run build && pnpm run pack",
     "typecheck": "pnpm -r run typecheck",

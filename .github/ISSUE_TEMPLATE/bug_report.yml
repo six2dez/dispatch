@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in Dispatch doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in the fields
+        below so we can reproduce the issue quickly. For security issues,
+        **do not use this form** — see [SECURITY.md](../../SECURITY.md).
+  - type: input
+    id: dispatch-version
+    attributes:
+      label: Dispatch version
+      description: From Caido's Plugins page or the release tag you installed
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: input
+    id: caido-version
+    attributes:
+      label: Caido version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (WSL)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Tool template, placeholder values (redact anything sensitive), actions
+        in the UI. If it involves a specific request, describe its shape.
+      placeholder: |
+        1. Right-click a request with a multipart body
+        2. Dispatch → sqlmap (request file)
+        3. Click Run in the preview
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Output from Caido's plugin log panel (with `[Dispatch]` prefix) or the run's stderr.
+      render: shell
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues and this isn't a duplicate
+          required: true
+        - label: I redacted any credentials, tokens, or internal hostnames from the report
+          required: true

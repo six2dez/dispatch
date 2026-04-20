@@ -1,8 +1,18 @@
 # Dispatch
 
+[![Release](https://img.shields.io/github/v/release/six2dez/dispatch?sort=semver)](https://github.com/six2dez/dispatch/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/six2dez/dispatch/ci.yml?branch=main&label=CI)](https://github.com/six2dez/dispatch/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/six2dez/dispatch)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/six2dez/dispatch/total)](https://github.com/six2dez/dispatch/releases)
+[![Last commit](https://img.shields.io/github/last-commit/six2dez/dispatch)](https://github.com/six2dez/dispatch/commits/main)
+
 A [Caido](https://caido.io) plugin to send intercepted HTTP requests to external CLI security tools (sqlmap, ffuf, nuclei, dalfox, etc.) with one click, streaming output in a built-in terminal.
 
 Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for Burp Suite.
+
+<p align="center">
+  <img src="images/picker.png" alt="Dispatch tool picker" width="720">
+</p>
 
 ## Features
 
@@ -23,9 +33,10 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 ## Installation
 
-1. Download `dispatch.zip` from [Releases](https://github.com/six2dez/dispatch/releases)
-2. In Caido, go to Plugins → Install from file → Select the zip
-3. The "Dispatch" sidebar entry and context menu will appear immediately
+1. Download `dispatch.zip` (and optionally `dispatch.zip.sig` + `public.pem` to verify) from [Releases](https://github.com/six2dez/dispatch/releases)
+2. (Optional but recommended) [Verify the signature](#verifying-a-release)
+3. In Caido, go to Plugins → Install from file → Select the zip
+4. The "Dispatch" sidebar entry and context menu will appear immediately
 
 ## Usage
 
@@ -34,6 +45,10 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 3. Search or pick a tool from the list
 4. Review the resolved command in the preview dialog
 5. Click **Run** — output streams live in the Terminal tab
+
+<p align="center">
+  <img src="images/preview.png" alt="Preview dialog" width="720">
+</p>
 
 ### Multi-select
 
@@ -101,6 +116,21 @@ Replace `WORDLIST` in the preview dialog with your actual wordlist path before r
 - Use **Import/Export** to backup and share your tool configurations as JSON
 - Quick-dispatch entries update automatically after you add, edit, disable, or remove a tool in Settings
 
+<p align="center">
+  <img src="images/settings.png" alt="Settings panel with tool detection" width="720">
+</p>
+
+## History & Findings
+
+Every run lands in the **History** tab with exit code, duration, and full output.
+Filter by tool name or exit code, reopen any run's stdout/stderr, or click
+**Create Finding** to file a Caido Finding linked to the original request and the
+tool output.
+
+<p align="center">
+  <img src="images/history.png" alt="History panel" width="720">
+</p>
+
 ## Keyboard Shortcuts
 
 | Context | Key | Action |
@@ -115,6 +145,8 @@ Replace `WORDLIST` in the preview dialog with your actual wordlist path before r
 
 ## Building from Source
 
+Requires Node.js ≥ 20 and pnpm ≥ 9 (pin your version with the provided `.nvmrc`).
+
 ```bash
 git clone https://github.com/six2dez/dispatch.git
 cd dispatch
@@ -125,6 +157,50 @@ pnpm run build
 ```
 
 The output `dist/dispatch.zip` is ready to install in Caido.
+
+## Verifying a Release
+
+Every release publishes `dispatch.zip` alongside `dispatch.zip.sig` (ED25519
+signature) and `public.pem` (verification key). To confirm a download has not
+been tampered with:
+
+```sh
+openssl pkeyutl -verify \
+  -pubin -inkey public.pem \
+  -rawin -in dispatch.zip \
+  -sigfile dispatch.zip.sig
+```
+
+A successful verification prints `Signature Verified Successfully`. Any other
+output means the file was modified or the wrong key was used — do not install.
+
+## Platform Support
+
+- **macOS** and **Linux** are first-class: commands run through your login
+  shell (`/bin/zsh -lc` on macOS, `/bin/bash -lc` elsewhere).
+- **Windows** is **not directly supported** — use WSL and install Caido + the
+  CLI tools inside the WSL distro, or run Caido in a Linux VM.
+
+## Troubleshooting
+
+- **Tool detected as missing but it's installed**: Dispatch resolves tools
+  through a login shell, so it sees the same `PATH` you get in a fresh terminal
+  tab. Make sure your tool is exported from `~/.zshrc`, `~/.zprofile`,
+  `~/.bash_profile`, or `~/.bashrc` (depending on your shell), not only from a
+  project-local env.
+- **Command edited in preview doesn't use my env var**: env vars like
+  `$WPSCAN_API` are expanded by the login shell at run-time. If the variable
+  isn't set in your shell profile, it silently expands to an empty string.
+  Check with `env | grep WPSCAN_API` in a terminal tab.
+- **Process stays running after hitting Kill**: Dispatch terminates the entire
+  process group. If a tool double-forks into a daemon it may survive; kill it
+  manually with `pkill -f toolname`.
+- **History shows truncated output**: buffered output is capped at 512 KB per
+  stream (stdout and stderr). Redirect the tool's output to a file in the
+  command template if you need the full log (e.g. `nuclei ... -o /tmp/out.txt`).
+- **Signature verification fails**: make sure you downloaded `public.pem` from
+  the same release, not from the repo. The key is attached to every release
+  from 0.3 onward.
 
 ## Security
 

@@ -7,6 +7,13 @@ export interface ToolConfig {
   enabled: boolean;
   sortOrder: number;
   detectionBinary?: string;
+  /**
+   * Hard timeout in milliseconds. If set and > 0 the executor sends SIGTERM
+   * (then SIGKILL after a 5 s grace period) to the entire process group when
+   * the run exceeds this duration. Undefined or 0 means no timeout, matching
+   * pre-0.3 behavior.
+   */
+  timeoutMs?: number;
 }
 
 export interface RunEntry {

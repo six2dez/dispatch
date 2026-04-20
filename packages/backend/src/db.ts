@@ -187,8 +187,13 @@ async function initDatabase(): Promise<Database> {
     show_preview INTEGER DEFAULT 1,
     enabled INTEGER DEFAULT 1,
     sort_order INTEGER DEFAULT 0,
-    detection_binary TEXT DEFAULT NULL
+    detection_binary TEXT DEFAULT NULL,
+    timeout_ms INTEGER DEFAULT NULL
   )`);
+
+  // Idempotent column adds for users upgrading from <0.3 — SQLite has no
+  // "ADD COLUMN IF NOT EXISTS", so we probe table_info and skip when present.
+  await ensureToolsColumn(db, "timeout_ms", "INTEGER DEFAULT NULL");
 
   await sqlRun(db, `CREATE TABLE IF NOT EXISTS history (
     id TEXT PRIMARY KEY,
@@ -227,12 +232,27 @@ async function initDatabase(): Promise<Database> {
   return db;
 }
 
+async function ensureToolsColumn(db: Database, name: string, definition: string): Promise<void> {
+  const rows = await query(db, `PRAGMA table_info(tools)`);
+  const hasColumn = rows.some((row) => String(row.name ?? "") === name);
+  if (hasColumn) return;
+  try {
+    await sqlRun(db, `ALTER TABLE tools ADD COLUMN ${name} ${definition}`);
+    log(`Added tools.${name} column`);
+  } catch (err) {
+    logError(`ensureToolsColumn(${name}) failed: ${err}`);
+  }
+}
+
 function buildInsertToolSql(tool: ToolConfig): string {
   const detBin = tool.detectionBinary !== undefined
     ? `'${sqlEscape(tool.detectionBinary)}'`
     : "NULL";
-  return `INSERT OR REPLACE INTO tools (id, name, command, "group", show_preview, enabled, sort_order, detection_binary)
-    VALUES ('${sqlEscape(tool.id)}', '${sqlEscape(tool.name)}', '${sqlEscape(tool.command)}', '${sqlEscape(tool.group)}', ${tool.showPreview ? 1 : 0}, ${tool.enabled ? 1 : 0}, ${tool.sortOrder}, ${detBin})`;
+  const timeoutMs = typeof tool.timeoutMs === "number" && tool.timeoutMs > 0
+    ? String(Math.floor(tool.timeoutMs))
+    : "NULL";
+  return `INSERT OR REPLACE INTO tools (id, name, command, "group", show_preview, enabled, sort_order, detection_binary, timeout_ms)
+    VALUES ('${sqlEscape(tool.id)}', '${sqlEscape(tool.name)}', '${sqlEscape(tool.command)}', '${sqlEscape(tool.group)}', ${tool.showPreview ? 1 : 0}, ${tool.enabled ? 1 : 0}, ${tool.sortOrder}, ${detBin}, ${timeoutMs})`;
 }
 
 async function execInsertTool(db: Database, tool: ToolConfig): Promise<void> {
@@ -242,6 +262,10 @@ async function execInsertTool(db: Database, tool: ToolConfig): Promise<void> {
 // --- Row mapping ---
 
 function rowToTool(row: Record<string, unknown>): ToolConfig {
+  const rawTimeout = row.timeout_ms;
+  const timeoutMs = rawTimeout !== null && rawTimeout !== undefined
+    ? Number(rawTimeout)
+    : undefined;
   return {
     id: String(row.id ?? ""),
     name: String(row.name ?? ""),
@@ -252,6 +276,9 @@ function rowToTool(row: Record<string, unknown>): ToolConfig {
     sortOrder: Number(row.sort_order ?? 0),
     detectionBinary: row.detection_binary !== null && row.detection_binary !== undefined
       ? String(row.detection_binary)
+      : undefined,
+    timeoutMs: timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
       : undefined,
   };
 }

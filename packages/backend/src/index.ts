@@ -28,8 +28,9 @@ import {
   executeToolCommand,
   executeToolCommandAsync,
   getMaxConcurrent,
-  isAtCapacity,
   killActiveProcess,
+  releaseSlot,
+  reserveSlot,
   setExecutorSdk,
   startPeriodicCleanup,
 } from "./executor";
@@ -45,10 +46,14 @@ function generateId(): string {
 const PREVIEW_TTL_MS = 5 * 60 * 1000;
 const previewTempFiles = new Map<string, { tempFiles: string[]; timestamp: number }>();
 
-function assertExecutionCapacity(): void {
-  if (isAtCapacity()) {
+function reserveSlotOrThrow(runId: string): void {
+  if (!reserveSlot(runId)) {
     throw new Error(`Max concurrent processes (${getMaxConcurrent()}) reached`);
   }
+}
+
+function toRunnerTimeout(tool: { timeoutMs?: number }): number | null {
+  return typeof tool.timeoutMs === "number" && tool.timeoutMs > 0 ? tool.timeoutMs : null;
 }
 
 function cleanupPreviewTempFiles(tempFiles: string[]): void {
@@ -131,6 +136,7 @@ async function importTools(
         enabled: typeof t.enabled === "boolean" ? t.enabled : true,
         sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : 999,
         detectionBinary: typeof t.detectionBinary === "string" ? t.detectionBinary : undefined,
+        timeoutMs: typeof t.timeoutMs === "number" && t.timeoutMs > 0 ? t.timeoutMs : undefined,
       });
       imported++;
     }
@@ -192,21 +198,27 @@ async function executeCommand(
 ): Promise<string> {
   const tool = await getToolById(toolId);
   if (!tool) throw new Error(`Tool ${toolId} not found`);
-  assertExecutionCapacity();
 
   const runId = generateId();
+  reserveSlotOrThrow(runId);
+  const timeout = toRunnerTimeout(tool);
   const previewKey = `${requestId}:${toolId}`;
 
-  if (editedCmd !== undefined) {
-    const entry = previewTempFiles.get(previewKey);
-    const tempFiles = entry?.tempFiles ?? [];
-    previewTempFiles.delete(previewKey);
-    executeToolCommand(sdk, runId, editedCmd, tempFiles, tool.id, tool.name, requestId, null);
-  } else {
-    previewTempFiles.delete(previewKey);
-    const data = await extractRequestData(sdk, requestId);
-    const { command, tempFiles } = resolvePlaceholders(tool.command, data);
-    executeToolCommand(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, null);
+  try {
+    if (editedCmd !== undefined) {
+      const entry = previewTempFiles.get(previewKey);
+      const tempFiles = entry?.tempFiles ?? [];
+      previewTempFiles.delete(previewKey);
+      executeToolCommand(sdk, runId, editedCmd, tempFiles, tool.id, tool.name, requestId, null, timeout);
+    } else {
+      previewTempFiles.delete(previewKey);
+      const data = await extractRequestData(sdk, requestId);
+      const { command, tempFiles } = resolvePlaceholders(tool.command, data);
+      executeToolCommand(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, null, timeout);
+    }
+  } catch (err) {
+    releaseSlot(runId);
+    throw err;
   }
 
   return runId;
@@ -222,11 +234,15 @@ async function executeBatch(
   const tool = await getToolById(toolId);
   if (!tool) throw new Error(`Tool ${toolId} not found`);
   if (uniqueRequestIds.length === 0) throw new Error("No requests provided");
-  assertExecutionCapacity();
 
   const batchId = generateId();
   const runIds = uniqueRequestIds.map(() => generateId());
   const total = uniqueRequestIds.length;
+  const timeout = toRunnerTimeout(tool);
+
+  // Reserve the slot for the first iteration synchronously so the RPC caller
+  // gets an immediate "max concurrent" error instead of a silent drop later.
+  reserveSlotOrThrow(runIds[0]!);
 
   // Background sequential chain — RPC returns immediately
   (async () => {
@@ -235,7 +251,14 @@ async function executeBatch(
       const requestId = uniqueRequestIds[i]!;
       const runId = runIds[i]!;
 
-      // Send progress event
+      // The first iteration already reserved its slot above; later ones must
+      // reserve now (prior run has released its slot by this point).
+      if (i > 0 && !reserveSlot(runId)) {
+        sdk.console.error(`[Dispatch] batch item ${i} skipped: max concurrent (${getMaxConcurrent()}) reached`);
+        completed++;
+        continue;
+      }
+
       sdk.api.send("batch:progress", {
         batchId,
         completed,
@@ -249,8 +272,11 @@ async function executeBatch(
         const data = await extractRequestData(sdk, requestId);
         const template = editedCmd ?? tool.command;
         const { command, tempFiles } = resolvePlaceholders(template, data);
-        await executeToolCommandAsync(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, batchId);
+        await executeToolCommandAsync(sdk, runId, command, tempFiles, tool.id, tool.name, requestId, batchId, timeout);
       } catch (e) {
+        // Slot may or may not have been consumed by spawnAndTrack depending on
+        // where the throw happened; releaseSlot is idempotent.
+        releaseSlot(runId);
         sdk.console.error(`[Dispatch] batch item ${i} failed: ${e}`);
         // Continue with next request instead of breaking the chain
       }
@@ -278,11 +304,16 @@ async function executeCustom(
   requestId: string,
   command: string
 ): Promise<string> {
-  assertExecutionCapacity();
   const runId = generateId();
-  const data = await extractRequestData(sdk, requestId);
-  const { command: resolved, tempFiles } = resolvePlaceholders(command, data);
-  executeToolCommand(sdk, runId, resolved, tempFiles, "custom", "Custom command", requestId, null);
+  reserveSlotOrThrow(runId);
+  try {
+    const data = await extractRequestData(sdk, requestId);
+    const { command: resolved, tempFiles } = resolvePlaceholders(command, data);
+    executeToolCommand(sdk, runId, resolved, tempFiles, "custom", "Custom command", requestId, null, null);
+  } catch (err) {
+    releaseSlot(runId);
+    throw err;
+  }
   return runId;
 }
 

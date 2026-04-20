@@ -49,11 +49,16 @@ export function useTerminal() {
     const state = runs.value.get(runId);
     if (!state) return;
 
-    // Mutate in-place — shallowRef won't trigger on deep changes, so we triggerRef manually
-    state.output = capOutput(state.output + data);
-    if (stream === "stderr") {
-      state.stderr = capOutput(state.stderr + data);
-    }
+    // Replace the entry with a fresh reference so `v-for :key=runId` detects a
+    // prop change and re-renders RunBlock. In-place mutation only invalidates
+    // the outer shallowRef, which is not enough because the child component
+    // reuses the same vnode when the key is unchanged.
+    const next: RunState = {
+      ...state,
+      output: capOutput(state.output + data),
+      stderr: stream === "stderr" ? capOutput(state.stderr + data) : state.stderr,
+    };
+    runs.value.set(runId, next);
     triggerRef(runs);
   }
 
@@ -67,11 +72,28 @@ export function useTerminal() {
   }
 
   function finishRun(runId: string, exitCode: number, duration: number): void {
-    const state = runs.value.get(runId);
-    if (!state) return;
-    state.exitCode = exitCode;
-    state.duration = duration;
-    state.finished = true;
+    const existing = runs.value.get(runId);
+    const base: RunState = existing ?? {
+      // Fallback when terminal:start was dropped (e.g. reinstall race): surface
+      // the finished run so the user sees the outcome instead of a phantom
+      // "Running…" block. History dialog can fill in stdout/stderr afterwards.
+      runId,
+      toolName: "(unknown)",
+      command: "",
+      requestId: null,
+      exitCode: null,
+      duration: null,
+      startedAt: new Date(Date.now() - duration).toISOString(),
+      output: "",
+      stderr: "",
+      finished: false,
+    };
+    runs.value.set(runId, {
+      ...base,
+      exitCode,
+      duration,
+      finished: true,
+    });
     completedRunsVersion.value++;
     triggerRef(runs);
   }

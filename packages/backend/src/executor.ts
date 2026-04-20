@@ -22,14 +22,25 @@ export function setExecutorSdk(sdk: PluginSDK): void {
 }
 
 const activeProcesses = new Map<string, ChildProcess>();
+const reservedSlots = new Set<string>();
 const killedRunIds = new Set<string>();
 
 function logError(msg: string): void {
   sdkRef?.console?.error(`[Dispatch] ${msg}`);
 }
 
+// Wrap sdk.api.send so a throw from the event bus can't kill the stream
+// handler and silently strand the run.
+function safeSend(sdk: PluginSDK, event: string, payload: unknown): void {
+  try {
+    (sdk.api.send as unknown as (ev: string, data: unknown) => void)(event, payload);
+  } catch (err) {
+    logError(`api.send(${event}) failed: ${err}`);
+  }
+}
+
 export function getActiveCount(): number {
-  return activeProcesses.size;
+  return activeProcesses.size + reservedSlots.size;
 }
 
 export function getMaxConcurrent(): number {
@@ -37,18 +48,46 @@ export function getMaxConcurrent(): number {
 }
 
 export function isAtCapacity(): boolean {
-  return activeProcesses.size >= MAX_CONCURRENT;
+  return activeProcesses.size + reservedSlots.size >= MAX_CONCURRENT;
 }
 
-// Spawn using user's login shell to inherit full PATH
+/**
+ * Atomically reserve a concurrency slot. Synchronous — callers can reserve
+ * before any `await`, guaranteeing that concurrent `executeCommand` calls
+ * cannot collectively exceed `MAX_CONCURRENT` between the capacity check
+ * and the actual spawn.
+ *
+ * Returns true when the slot is reserved and the caller must either call
+ * `executeToolCommand[Async]` (which consumes the reservation in
+ * `spawnAndTrack`) or `releaseSlot(runId)` on error.
+ */
+export function reserveSlot(runId: string): boolean {
+  if (isAtCapacity()) return false;
+  reservedSlots.add(runId);
+  return true;
+}
+
+export function releaseSlot(runId: string): void {
+  reservedSlots.delete(runId);
+}
+
+// Spawn using user's login shell to inherit full PATH.
+// `stdio` is forced explicitly so the Node runtime embedded in Caido creates
+// pipes for stdout/stderr even when `detached: true` — without this, the
+// `on("data")` events never fired on some hosts and runs looked stuck at
+// "Running…" with empty output despite exiting cleanly.
 function spawnWithLoginShell(command: string): ChildProcess {
+  const opts = {
+    detached: USE_PROCESS_GROUPS,
+    stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[],
+  };
   try {
     if (IS_MAC) {
-      return spawn("/bin/zsh", ["-lc", command], { detached: USE_PROCESS_GROUPS });
+      return spawn("/bin/zsh", ["-lc", command], opts);
     }
-    return spawn("/bin/bash", ["-lc", command], { detached: USE_PROCESS_GROUPS });
+    return spawn("/bin/bash", ["-lc", command], opts);
   } catch {
-    return spawn("sh", ["-c", command], { detached: USE_PROCESS_GROUPS });
+    return spawn("sh", ["-c", command], opts);
   }
 }
 
@@ -91,9 +130,15 @@ function spawnAndTrack(
   toolName: string,
   requestId: string | null,
   startedAt: string,
+  timeoutMs: number | null,
   onClose?: () => void
 ): void {
-  if (isAtCapacity()) {
+  // Consume the reservation (if any). If the caller didn't reserve we fall
+  // back to a capacity check as defense-in-depth — should not happen in
+  // normal flow but keeps the limit honest if a future caller forgets to
+  // reserve.
+  const hadReservation = reservedSlots.delete(runId);
+  if (!hadReservation && activeProcesses.size >= MAX_CONCURRENT) {
     logError(`Max concurrent processes (${MAX_CONCURRENT}) reached, rejecting ${runId}`);
     cleanupTempFiles(tempFiles);
     updateHistoryEntry(runId, {
@@ -106,7 +151,7 @@ function spawnAndTrack(
     return;
   }
 
-  sdk.api.send("terminal:start", {
+  safeSend(sdk, "terminal:start", {
     runId,
     toolName,
     resolvedCommand,
@@ -120,14 +165,42 @@ function spawnAndTrack(
   let stdoutBuf = "";
   let stderrBuf = "";
   let finalized = false;
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  let timeoutEscalation: ReturnType<typeof setTimeout> | null = null;
+
+  const effectiveTimeout = timeoutMs !== null && timeoutMs > 0 ? timeoutMs : 0;
+  if (effectiveTimeout > 0) {
+    timeoutTimer = setTimeout(() => {
+      if (finalized || !activeProcesses.has(runId)) return;
+      const msg = `\n[Dispatch] Timeout reached (${effectiveTimeout} ms), killing process\n`;
+      stderrBuf = appendOutputChunk(stderrBuf, msg);
+      safeSend(sdk, "terminal:output", { runId, data: msg, stream: "stderr" as const });
+      killedRunIds.add(runId);
+      killProcessTree(child, "SIGTERM");
+      timeoutEscalation = setTimeout(() => {
+        if (!finalized && activeProcesses.has(runId)) {
+          killProcessTree(child, "SIGKILL");
+        }
+      }, 5000);
+    }, effectiveTimeout);
+  }
 
   function finalize(exitCode: number, status: "completed" | "error" | "killed", errorMessage?: string): void {
     if (finalized) return;
     finalized = true;
 
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      timeoutTimer = null;
+    }
+    if (timeoutEscalation) {
+      clearTimeout(timeoutEscalation);
+      timeoutEscalation = null;
+    }
+
     if (errorMessage) {
       stderrBuf = appendOutputChunk(stderrBuf, `${errorMessage}\n`);
-      sdk.api.send("terminal:output", { runId, data: `${errorMessage}\n`, stream: "stderr" as const });
+      safeSend(sdk, "terminal:output", { runId, data: `${errorMessage}\n`, stream: "stderr" as const });
     }
 
     const finishedAt = new Date().toISOString();
@@ -143,7 +216,7 @@ function spawnAndTrack(
       finishedAt,
     }).catch((e) => logError(`updateHistoryEntry failed: ${e}`));
 
-    sdk.api.send("terminal:exit", { runId, exitCode, duration });
+    safeSend(sdk, "terminal:exit", { runId, exitCode, duration });
 
     cleanupTempFiles(tempFiles);
     onClose?.();
@@ -152,14 +225,17 @@ function spawnAndTrack(
   child.stdout?.on("data", (data) => {
     const chunk = data.toString();
     stdoutBuf = appendOutputChunk(stdoutBuf, chunk);
-    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stdout" as const });
+    safeSend(sdk, "terminal:output", { runId, data: chunk, stream: "stdout" as const });
   });
 
   child.stderr?.on("data", (data) => {
     const chunk = data.toString();
     stderrBuf = appendOutputChunk(stderrBuf, chunk);
-    sdk.api.send("terminal:output", { runId, data: chunk, stream: "stderr" as const });
+    safeSend(sdk, "terminal:output", { runId, data: chunk, stream: "stderr" as const });
   });
+
+  child.stdout?.on("error", (err) => logError(`stdout error ${runId}: ${err}`));
+  child.stderr?.on("error", (err) => logError(`stderr error ${runId}: ${err}`));
 
   child.on("close", (exitCode: number | null) => {
     const wasKilled = killedRunIds.has(runId);
@@ -186,7 +262,8 @@ export function executeToolCommand(
   toolId: string,
   toolName: string,
   requestId: string | null,
-  batchId: string | null
+  batchId: string | null,
+  timeoutMs: number | null = null
 ): void {
   const startedAt = new Date().toISOString();
 
@@ -205,7 +282,7 @@ export function executeToolCommand(
     finishedAt: null,
   }).catch((e) => logError(`insertHistoryEntry failed: ${e}`));
 
-  spawnAndTrack(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt);
+  spawnAndTrack(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt, timeoutMs);
 }
 
 /** Async version: awaits DB insert, resolves when child closes. */
@@ -217,7 +294,8 @@ export async function executeToolCommandAsync(
   toolId: string,
   toolName: string,
   requestId: string | null,
-  batchId: string | null
+  batchId: string | null,
+  timeoutMs: number | null = null
 ): Promise<void> {
   const startedAt = new Date().toISOString();
 
@@ -237,7 +315,7 @@ export async function executeToolCommandAsync(
   });
 
   return new Promise((resolve) => {
-    spawnAndTrack(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt, resolve);
+    spawnAndTrack(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt, timeoutMs, resolve);
   });
 }
 

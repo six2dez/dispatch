@@ -39,21 +39,25 @@ export function resolvePlaceholders(
   if (template.includes("%R") || template.includes("%E") || template.includes("%B")) {
     const tmpDir = mkdtempSync(join(tmpdir(), "dispatch-"));
 
+    // 0o600 — request data can contain cookies, bearer tokens, and raw bodies.
+    // Restrict to the current user so other local accounts can't read.
+    const fileOpts = { mode: 0o600 } as const;
+
     if (template.includes("%R")) {
       rFile = join(tmpDir, "request.raw");
       // Use binary-safe bytes to preserve non-UTF-8 content
-      writeFileSync(rFile, data.rawRequestBytes);
+      writeFileSync(rFile, data.rawRequestBytes, fileOpts);
       tempFiles.push(rFile);
     }
     if (template.includes("%E")) {
       eFile = join(tmpDir, "headers.txt");
-      writeFileSync(eFile, data.headers);
+      writeFileSync(eFile, data.headers, fileOpts);
       tempFiles.push(eFile);
     }
     if (template.includes("%B")) {
       bFile = join(tmpDir, "body.txt");
       // Use binary-safe bytes to preserve non-UTF-8 content
-      writeFileSync(bFile, data.bodyBytes);
+      writeFileSync(bFile, data.bodyBytes, fileOpts);
       tempFiles.push(bFile);
     }
   }
