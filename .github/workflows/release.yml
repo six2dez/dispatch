@@ -91,18 +91,13 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
         run: |
           if [[ -z "${PRIVATE_KEY}" ]]; then
-            echo "::warning::PRIVATE_KEY secret missing — release will be unsigned"
-            exit 0
+            echo "::error::PRIVATE_KEY secret is missing — cannot sign release. Configure it under Settings → Secrets and re-run."
+            exit 1
           fi
           printf '%s' "${PRIVATE_KEY}" > private_key.pem
           openssl pkeyutl -sign -inkey private_key.pem -out dispatch.zip.sig -rawin -in dispatch.zip
+          openssl pkey -in private_key.pem -pubout -out public.pem
           rm -f private_key.pem
-
-      - name: Publish public key
-        run: |
-          if [[ -f public.pem ]]; then
-            cp public.pem dist/public.pem
-          fi
 
       - name: Create release
         uses: ncipollo/release-action@v1
