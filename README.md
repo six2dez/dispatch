@@ -33,7 +33,7 @@ Inspired by [Custom Send To](https://github.com/PortSwigger/custom-send-to) for 
 
 ## Installation
 
-1. Download `dispatch.zip` (and optionally `dispatch.zip.sig` + `public.pem` to verify) from [Releases](https://github.com/six2dez/dispatch/releases)
+1. Download `plugin_package.zip` (and optionally `plugin_package.zip.sig` + `public.pem` to verify) from [Releases](https://github.com/six2dez/dispatch/releases)
 2. (Optional but recommended) [Verify the signature](#verifying-a-release)
 3. In Caido, go to Plugins → Install from file → Select the zip
 4. The "Dispatch" sidebar entry and context menu will appear immediately
@@ -156,19 +156,19 @@ pnpm run typecheck
 pnpm run build
 ```
 
-The output `dist/dispatch.zip` is ready to install in Caido.
+The output `dist/plugin_package.zip` is ready to install in Caido.
 
 ## Verifying a Release
 
-Every release publishes `dispatch.zip` alongside `dispatch.zip.sig` (ED25519
+Every release publishes `plugin_package.zip` alongside `plugin_package.zip.sig` (ED25519
 signature) and `public.pem` (verification key). To confirm a download has not
 been tampered with:
 
 ```sh
 openssl pkeyutl -verify \
   -pubin -inkey public.pem \
-  -rawin -in dispatch.zip \
-  -sigfile dispatch.zip.sig
+  -rawin -in plugin_package.zip \
+  -sigfile plugin_package.zip.sig
 ```
 
 A successful verification prints `Signature Verified Successfully`. Any other

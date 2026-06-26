@@ -17,7 +17,7 @@ backward compatible.
 - **Plugin icon.** `manifest.json` now declares `icon.svg`, bundled into the
   release zip by `scripts/pack.js`.
 - **Release signature artifacts.** Release workflow publishes `public.pem`
-  alongside `dispatch.zip` and `dispatch.zip.sig` so downloaders can verify
+  alongside `plugin_package.zip` and `plugin_package.zip.sig` so downloaders can verify
   without cloning the repo.
 - **CI pipeline.** `.github/workflows/ci.yml` runs lint, typecheck, and build
   on every pull request and push to `main`; PR builds upload the zip as an

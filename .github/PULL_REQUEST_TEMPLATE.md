@@ -19,7 +19,7 @@ sqlmap preset against X; History shows exit 0." Screenshots welcome for UI work.
 
 - [ ] `pnpm lint` passes
 - [ ] `pnpm typecheck` passes
-- [ ] `pnpm build` produces a working `dist/dispatch.zip`
+- [ ] `pnpm build` produces a working `dist/plugin_package.zip`
 - [ ] Manually installed and exercised in Caido (for UI / executor changes)
 - [ ] Updated `CHANGELOG.md` under `## Unreleased` (unless this is docs-only)
 - [ ] Updated `README.md` if behavior or placeholders changed

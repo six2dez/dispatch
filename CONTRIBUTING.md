@@ -22,12 +22,12 @@ pnpm install
 ```sh
 pnpm lint          # ESLint on packages/
 pnpm typecheck     # tsc --noEmit across backend and frontend
-pnpm build         # clean + build + pack into dist/dispatch.zip
+pnpm build         # clean + build + pack into dist/plugin_package.zip
 pnpm pack          # rebuild just the zip (no clean, no per-package build)
 pnpm clean         # remove dist/
 ```
 
-Open `dist/dispatch.zip` from **Caido → Plugins → Install from file** to iterate
+Open `dist/plugin_package.zip` from **Caido → Plugins → Install from file** to iterate
 on real behavior. Caido reloads the plugin on install, so rebuild + reinstall is
 the developer loop.
 
@@ -36,7 +36,7 @@ the developer loop.
 ```
 dispatch/
 ├── manifest.json                 # Caido plugin manifest (icon, entrypoints, version)
-├── scripts/pack.js               # zips manifest + icon + dist/ into dispatch.zip
+├── scripts/pack.js               # zips manifest + icon + dist/ into plugin_package.zip
 ├── packages/backend/             # JS runtime inside Caido (spawns CLIs, SQLite)
 │   └── src/
 │       ├── executor.ts           # spawns, concurrency reservation, timeout, kill
@@ -66,7 +66,7 @@ dispatch/
 3. `pnpm typecheck`
 4. `pnpm build`
 
-PR builds upload `dispatch.zip` as an artifact — reviewers can download and test
+PR builds upload `plugin_package.zip` as an artifact — reviewers can download and test
 without checking out.
 
 ## Coding conventions
@@ -112,7 +112,7 @@ promotes the section and bumps `manifest.json` + `package.json` + each package
 3. `git commit -am "release vX.Y.Z"` and `git tag vX.Y.Z && git push --tags`.
 4. `release.yml` takes it from there — it validates the tag matches the
    manifest, builds, signs with the `PRIVATE_KEY` secret, and publishes
-   `dispatch.zip` + `.sig` + `public.pem` to GitHub Releases with notes pulled
+   `plugin_package.zip` + `.sig` + `public.pem` to GitHub Releases with notes pulled
    from the matching changelog section.
 5. For emergency releases, run the workflow manually from the Actions tab
    (`workflow_dispatch`) on `main`.

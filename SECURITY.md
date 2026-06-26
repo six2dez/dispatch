@@ -71,7 +71,7 @@ are considered bugs worth reporting:
 
 ## Release signature verification
 
-Every release publishes `dispatch.zip` along with `dispatch.zip.sig`, an ED25519
+Every release publishes `plugin_package.zip` along with `plugin_package.zip.sig`, an ED25519
 signature over the zip. The public key `public.pem` is attached to each release.
 
 To verify a downloaded release:
@@ -79,8 +79,8 @@ To verify a downloaded release:
 ```sh
 openssl pkeyutl -verify \
   -pubin -inkey public.pem \
-  -rawin -in dispatch.zip \
-  -sigfile dispatch.zip.sig
+  -rawin -in plugin_package.zip \
+  -sigfile plugin_package.zip.sig
 ```
 
 If the command prints `Signature Verified Successfully`, the zip has not been

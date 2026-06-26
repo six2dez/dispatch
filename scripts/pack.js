@@ -40,8 +40,8 @@ async function pack() {
   }
 
   const content = await zip.generateAsync({ type: "nodebuffer" });
-  writeFileSync("dist/dispatch.zip", content);
-  console.log("Created dist/dispatch.zip");
+  writeFileSync("dist/plugin_package.zip", content);
+  console.log("Created dist/plugin_package.zip");
 }
 
 pack().catch(console.error);

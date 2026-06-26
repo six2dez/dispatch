@@ -51,7 +51,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: dispatch-zip-pr-${{ github.event.pull_request.number }}
-          path: dist/dispatch.zip
+          name: dispatch-plugin-pr-${{ github.event.pull_request.number }}
+          path: dist/plugin_package.zip
           retention-days: 14
           if-no-files-found: error

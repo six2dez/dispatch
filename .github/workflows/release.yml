@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v*.*.*"
+      - "[0-9]+.[0-9]+.[0-9]+"
 
 env:
   NODE_VERSION: 20
@@ -28,21 +28,21 @@ jobs:
         run: |
           MANIFEST_VERSION=$(jq -r .version manifest.json)
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # Caido store requires the tag to equal the version with no "v" prefix.
             TAG_VERSION="${GITHUB_REF_NAME#v}"
             if [[ "${TAG_VERSION}" != "${MANIFEST_VERSION}" ]]; then
               echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest.json version ${MANIFEST_VERSION}"
               exit 1
             fi
             VERSION="${TAG_VERSION}"
-            TAG="${GITHUB_REF_NAME}"
           else
             if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
               echo "::error::Manual release must run on main branch"
               exit 1
             fi
             VERSION="${MANIFEST_VERSION}"
-            TAG="v${MANIFEST_VERSION}"
           fi
+          TAG="${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -95,17 +95,17 @@ jobs:
             exit 1
           fi
           printf '%s' "${PRIVATE_KEY}" > private_key.pem
-          openssl pkeyutl -sign -inkey private_key.pem -out dispatch.zip.sig -rawin -in dispatch.zip
+          openssl pkeyutl -sign -inkey private_key.pem -out plugin_package.zip.sig -rawin -in plugin_package.zip
           openssl pkey -in private_key.pem -pubout -out public.pem
           rm -f private_key.pem
 
       - name: Create release
-        uses: ncipollo/release-action@v1
+        uses: caido/action-release@v1
         with:
           tag: ${{ steps.meta.outputs.tag }}
           commit: ${{ github.sha }}
           name: ${{ steps.meta.outputs.tag }}
           body: ${{ steps.changelog.outputs.body }}
-          artifacts: "dist/dispatch.zip,dist/dispatch.zip.sig,dist/public.pem"
-          allowUpdates: true
+          artifacts: "dist/plugin_package.zip,dist/plugin_package.zip.sig,dist/public.pem"
+          immutableCreate: true
           artifactErrorsFailBuild: true
