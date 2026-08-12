@@ -15,8 +15,8 @@ Only the latest minor release receives security fixes.
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | Yes       |
-| < 0.2   | No        |
+| 0.3.x   | Yes       |
+| < 0.3   | No        |
 
 ## Reporting a Vulnerability
 
