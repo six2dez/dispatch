@@ -57,7 +57,7 @@ export async function extractRequestData(
   };
 }
 
-function extractHeadersFromRaw(raw: string): string {
+export function extractHeadersFromRaw(raw: string): string {
   const headerEnd = raw.indexOf("\r\n\r\n");
   if (headerEnd < 0) return "";
   const firstLineEnd = raw.indexOf("\r\n");
@@ -115,7 +115,7 @@ function isIPv6Host(host: string): boolean {
   return normalized.includes(":");
 }
 
-function extractRootDomain(host: string): string {
+export function extractRootDomain(host: string): string {
   const normalizedHost = host.toLowerCase();
 
   if (isIPv4Host(normalizedHost) || isIPv6Host(normalizedHost) || normalizedHost === "localhost") {
