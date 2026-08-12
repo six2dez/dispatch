@@ -1,0 +1,83 @@
+/*
+ * Caido -> PrimeVue token bridge.
+ *
+ * @caido/primevue's Classic preset styles components with Tailwind utilities
+ * that resolve to Caido's --c-* design tokens. This file maps PrimeVue's own
+ * --p-* tokens onto the same Caido tokens, so any PrimeVue internal that reads
+ * --p-* still follows the active Caido theme.
+ *
+ * prefixwrap (see vite.config.ts) rewrites the :root selectors below to
+ * .plugin--dispatch, so these tokens are defined on the plugin's own roots
+ * only and never touch Caido's UI.
+ */
+
+/* Primary and Surface palettes */
+:root {
+    --p-primary-50: hsl(var(--c-primary-100));
+    --p-primary-100: hsl(var(--c-primary-100));
+    --p-primary-200: hsl(var(--c-primary-200));
+    --p-primary-300: hsl(var(--c-primary-300));
+    --p-primary-400: hsl(var(--c-primary-400));
+    --p-primary-500: hsl(var(--c-primary-500));
+    --p-primary-600: hsl(var(--c-primary-600));
+    --p-primary-700: hsl(var(--c-primary-700));
+    --p-primary-800: hsl(var(--c-primary-800));
+    --p-primary-900: hsl(var(--c-primary-900));
+    --p-primary-950: hsl(var(--c-primary-900));
+    --p-surface-0: hsl(var(--c-surface-0));
+    --p-surface-50: hsl(var(--c-surface-100));
+    --p-surface-100: hsl(var(--c-surface-100));
+    --p-surface-200: hsl(var(--c-surface-200));
+    --p-surface-300: hsl(var(--c-surface-300));
+    --p-surface-400: hsl(var(--c-surface-400));
+    --p-surface-500: hsl(var(--c-surface-500));
+    --p-surface-600: hsl(var(--c-surface-600));
+    --p-surface-700: hsl(var(--c-surface-700));
+    --p-surface-800: hsl(var(--c-surface-800));
+    --p-surface-900: hsl(var(--c-surface-900));
+    --p-surface-950: hsl(var(--c-surface-900));
+    --p-content-border-radius: 6px;
+}
+
+/* Light mode */
+:root {
+    --p-primary-color: var(--p-primary-500);
+    --p-primary-contrast-color: var(--p-surface-0);
+    --p-primary-hover-color: var(--p-primary-600);
+    --p-primary-active-color: var(--p-primary-700);
+    --p-content-border-color: var(--p-surface-200);
+    --p-content-hover-background: var(--p-surface-100);
+    --p-content-hover-color: var(--p-surface-800);
+    --p-highlight-background: var(--p-primary-50);
+    --p-highlight-color: var(--p-primary-700);
+    --p-highlight-focus-background: var(--p-primary-100);
+    --p-highlight-focus-color: var(--p-primary-800);
+    --p-text-color: var(--p-surface-700);
+    --p-text-hover-color: var(--p-surface-800);
+    --p-text-muted-color: var(--p-surface-500);
+    --p-text-hover-muted-color: var(--p-surface-600);
+}
+
+/*
+ * Dark mode. Caido core sets [data-mode="dark"] on <html>; prefixwrap rewrites
+ * this to #plugin--dispatch[data-mode="dark"]. The Classic preset itself drives
+ * dark mode through Tailwind's dark: variant (keyed on the <html> ancestor), so
+ * this block is a best-effort fallback for raw --p-* consumers.
+ */
+:root[data-mode="dark"] {
+    --p-primary-color: var(--p-primary-400);
+    --p-primary-contrast-color: var(--p-surface-900);
+    --p-primary-hover-color: var(--p-primary-300);
+    --p-primary-active-color: var(--p-primary-200);
+    --p-content-border-color: var(--p-surface-700);
+    --p-content-hover-background: var(--p-surface-800);
+    --p-content-hover-color: var(--p-surface-0);
+    --p-highlight-background: color-mix(in srgb, hsl(var(--c-primary-400)), transparent 84%);
+    --p-highlight-color: rgba(255, 255, 255, 0.87);
+    --p-highlight-focus-background: color-mix(in srgb, hsl(var(--c-primary-400)), transparent 76%);
+    --p-highlight-focus-color: rgba(255, 255, 255, 0.87);
+    --p-text-color: var(--p-surface-0);
+    --p-text-hover-color: var(--p-surface-0);
+    --p-text-muted-color: var(--p-surface-400);
+    --p-text-hover-muted-color: var(--p-surface-300);
+}

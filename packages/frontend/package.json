@@ -1,6 +1,6 @@
 {
   "name": "dispatch-frontend",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Dispatch plugin frontend for Caido",
   "author": "six2dez",
   "license": "MIT",
@@ -10,15 +10,19 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@caido/primevue": "0.3.3",
     "@caido/sdk-frontend": "0.41.0",
     "vue": "^3.5.13",
-    "primevue": "^4.3.3",
-    "@primevue/themes": "^4.3.3"
+    "primevue": "4.1.0"
   },
   "devDependencies": {
     "@caido/sdk-backend": "0.41.0",
+    "@caido/tailwindcss": "0.1.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "dispatch-backend": "workspace:*",
+    "postcss-prefixwrap": "1.51.0",
+    "tailwindcss": "3.4.13",
+    "tailwindcss-primeui": "0.3.4",
     "vue-tsc": "^2.2.8"
   }
 }

@@ -4,11 +4,13 @@ import Dialog from "primevue/dialog";
 import InputText from "primevue/inputtext";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { useToolCatalog } from "../composables/useToolCatalog";
 import { useDetection } from "../composables/useDetection";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 const { enabledTools, refreshToolCatalog } = useToolCatalog();
 const { refreshDetection, isToolInstalled, shouldRefresh } = useDetection();
 
@@ -141,7 +143,9 @@ defineExpose({ open });
     modal
     :closable="true"
     :draggable="false"
-    :pt="{ root: { class: 'picker-dialog' }, content: { class: 'picker-content' } }"
+    :append-to="overlayHost"
+    :style="{ width: '440px', maxWidth: '95vw' }"
+    :pt="{ content: { style: 'padding: 0' } }"
     @keydown="handleKeydown"
   >
     <template #header>
@@ -229,15 +233,13 @@ defineExpose({ open });
 </template>
 
 <style scoped>
-.picker-dialog {
-  width: 440px;
-  max-width: 95vw;
-}
-
-.picker-content {
-  padding: 0 !important;
-}
-
+/*
+ * Note: the Dialog's own root and content elements are styled through props
+ * (:style / :pt above), not from here. Scoped CSS cannot reach them — Vue does
+ * not carry this component's data-v attribute onto a child component's root
+ * when that root is teleported, so a `.picker-dialog[data-v-…]` rule would
+ * never match. Slot content like the rules below is unaffected.
+ */
 .picker-count {
   font-size: 12px;
   color: var(--c-fg-subtle, #999);

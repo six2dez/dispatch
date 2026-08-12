@@ -4,9 +4,11 @@ import Dialog from "primevue/dialog";
 import Button from "primevue/button";
 import Textarea from "primevue/textarea";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 
 const visible = ref(false);
 const command = ref("");
@@ -74,6 +76,7 @@ defineExpose({ open });
     v-model:visible="visible"
     modal
     header="Custom Command"
+    :append-to="overlayHost"
     :style="{ width: '600px', maxWidth: '95vw' }"
   >
     <Textarea

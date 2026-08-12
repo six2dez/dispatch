@@ -5,9 +5,11 @@ import Button from "primevue/button";
 import Textarea from "primevue/textarea";
 import type { ToolConfig, PlaceholderPreview } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 
 const visible = ref(false);
 const tool = ref<ToolConfig>();
@@ -83,6 +85,7 @@ defineExpose({ open });
     modal
     :closable="true"
     :draggable="false"
+    :append-to="overlayHost"
     :header="`Preview: ${tool?.name ?? ''}`"
     :style="{ width: '800px', maxWidth: '90vw' }"
     @keydown="handleKeydown"

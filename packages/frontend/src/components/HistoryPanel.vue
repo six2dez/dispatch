@@ -9,9 +9,11 @@ import Dialog from "primevue/dialog";
 import type { RunEntry } from "dispatch-backend";
 import { useTerminal } from "../composables/useTerminal";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 const { completedRunsVersion } = useTerminal();
 
 const rawEntries = ref<RunEntry[]>([]);
@@ -175,6 +177,7 @@ onUnmounted(() => {
           option-value="value"
           size="small"
           class="filter-select"
+          :append-to="overlayHost"
         />
       </div>
       <div class="history-actions">
@@ -249,6 +252,7 @@ onUnmounted(() => {
     <Dialog
       v-model:visible="outputVisible"
       modal
+      :append-to="overlayHost"
       :header="`Output: ${outputTitle}`"
       :style="{ width: '700px', maxWidth: '95vw' }"
     >

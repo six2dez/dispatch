@@ -1,64 +1,17 @@
 /*
- * Dispatch Plugin — Theme bridge
+ * Dispatch plugin styles.
  *
- * PrimeVue needs .p-dark for dark mode. Caido exposes --c-* variables.
- * We remap PrimeVue's surface variables to Caido's theme so components
- * automatically adapt to any Caido theme.
+ * Everything authored here (and in component <style> blocks) is wrapped under
+ * .plugin--dispatch at build time by postcss-prefixwrap (see vite.config.ts),
+ * so the plugin's CSS can never leak into — or be leaked into by — Caido's UI.
+ *
+ * PrimeVue runs unstyled with @caido/primevue's Classic passthrough preset,
+ * which themes components with Caido's own design tokens via Tailwind. The
+ * Tailwind layers below provide those utility classes; preflight is disabled
+ * in the Tailwind config so no global element resets are emitted.
  */
+@import "./primevue.css";
 
-/* Remap PrimeVue surface variables to Caido theme inside our root */
-.p-dark {
-  /* Backgrounds */
-  --p-surface-0: var(--c-bg-emphasis, #0d0d0d);
-  --p-surface-50: var(--c-bg-emphasis, #111);
-  --p-surface-100: var(--c-bg-default, #1a1a1a);
-  --p-surface-200: var(--c-bg-default, #1e1e1e);
-  --p-surface-300: var(--c-bg-subtle, #252525);
-  --p-surface-400: var(--c-fg-subtle, #666);
-  --p-surface-500: var(--c-fg-subtle, #888);
-  --p-surface-600: var(--c-fg-subtle, #999);
-  --p-surface-700: var(--c-border-default, #333);
-  --p-surface-800: var(--c-bg-subtle, #252525);
-  --p-surface-900: var(--c-bg-default, #1e1e1e);
-  --p-surface-950: var(--c-bg-emphasis, #0d0d0d);
-
-  /* Text colors */
-  --p-text-color: var(--c-fg-default, #e0e0e0);
-  --p-text-muted-color: var(--c-fg-subtle, #999);
-
-  /* Primary */
-  --p-primary-color: var(--c-primary, #6366f1);
-
-  /* Content backgrounds — used by DataTable, Card, Dialog, etc. */
-  --p-content-background: var(--c-bg-default, #1e1e1e);
-  --p-content-hover-background: var(--c-bg-subtle, #252525);
-  --p-content-border-color: var(--c-border-default, #333);
-}
-
-/* Tabs layout — ensure panels fill height and scroll */
-.dispatch-app .p-tabpanels {
-  flex: 1;
-  overflow: hidden;
-}
-
-.dispatch-app .p-tabpanel {
-  height: 100%;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-/* Ensure dialogs render above Caido's UI */
-.p-dialog-mask {
-  z-index: 10000 !important;
-}
-
-/* Select overlay (dropdown) — renders outside the root div so needs global styling */
-.p-select-overlay {
-  background: var(--c-bg-default, #1e1e1e) !important;
-  color: var(--c-fg-default, #e0e0e0) !important;
-  border-color: var(--c-border-default, #444) !important;
-}
-
-.p-select-option:hover {
-  background: var(--c-bg-subtle, #252525) !important;
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

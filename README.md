@@ -214,6 +214,7 @@ This plugin executes arbitrary shell commands by design — it is built for secu
 - Kill terminates the entire process group (pipes, subprocesses), not just the parent shell
 - Tool configurations imported from JSON get new IDs and cannot overwrite existing tools
 - Maximum 10 concurrent processes to prevent accidental resource exhaustion
+- The plugin itself makes no network requests, contacts no external service, collects no telemetry, and loads no remote assets — the only outbound traffic is whatever the CLI tool you launch produces. Everything it stores (tool configs, run history) stays in Caido's local plugin storage
 
 ## Notes
 

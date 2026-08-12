@@ -7,9 +7,11 @@ import Textarea from "primevue/textarea";
 import Checkbox from "primevue/checkbox";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 const emit = defineEmits<{ saved: [] }>();
 
 const visible = ref(false);
@@ -83,6 +85,7 @@ defineExpose({ open });
     v-model:visible="visible"
     modal
     :header="existingTool ? 'Edit Tool' : 'Add Tool'"
+    :append-to="overlayHost"
     :style="{ width: '500px' }"
   >
     <div class="editor-form">

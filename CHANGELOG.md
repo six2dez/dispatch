@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.1 (2026-08-12)
+
+Style isolation release. Installing Dispatch no longer alters Caido's own
+theme — the plugin now follows the styling pattern of the official
+`caido-community/create-plugin` template. No user-facing workflow changes.
+
+### Fixed
+
+- **Plugin styles no longer leak into Caido.** PrimeVue now runs unstyled with
+  `@caido/primevue`'s `Classic` passthrough preset instead of the styled
+  `@primevue/themes` Aura theme, which injected a global theme at runtime and
+  overrode Caido's own PrimeVue components. Every rule the plugin authors is
+  wrapped under a `.plugin--dispatch` scope at build time by
+  `postcss-prefixwrap`, and the app root no longer adds `.p-dark` to
+  `<html>` — dark mode now follows Caido's `[data-mode="dark"]` attribute, so
+  the plugin adapts to the active Caido theme instead of imposing one.
+- **Dialogs are scoped without losing their styles.** PrimeVue overlays
+  teleport out of the component tree, and the tool picker is opened from the
+  request context menu while Caido is showing another page, so they cannot
+  render inside the plugin's page body. They are now teleported into a
+  dedicated `<body>`-level host that carries the plugin scope, keeping the
+  plugin's CSS applied to them and contained at the same time.
+- **Tool picker sizing.** The picker dialog is 440px wide again and its content
+  padding is reset. Both were set from scoped CSS on the Dialog's own root,
+  which Vue never matched because a teleported component root does not inherit
+  the parent's scope attribute; they are now passed as props.
+
 ## 0.3.0 (2026-04-20)
 
 Release-readiness pass: the plugin now ships with a full CI pipeline, a

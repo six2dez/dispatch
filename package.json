@@ -1,6 +1,6 @@
 {
   "name": "dispatch",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Send HTTP requests to external CLI tools from Caido",
   "author": "six2dez",
   "license": "MIT",

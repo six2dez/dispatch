@@ -7,12 +7,14 @@ import Dialog from "primevue/dialog";
 import Textarea from "primevue/textarea";
 import type { ToolConfig } from "dispatch-backend";
 import { useSdk } from "../composables/useSdk";
+import { useOverlayHost } from "../composables/useOverlayHost";
 import { useToolCatalog } from "../composables/useToolCatalog";
 import { useDetection } from "../composables/useDetection";
 import ToolEditorDialog from "./ToolEditorDialog.vue";
 import { getErrorMessage } from "../utils/errors";
 
 const sdk = useSdk();
+const overlayHost = useOverlayHost();
 const { toolCatalog, refreshToolCatalog } = useToolCatalog();
 const { refreshDetection, invalidateDetection, isToolInstalled, getMissingBinaries } = useDetection();
 
@@ -282,6 +284,7 @@ onMounted(() => {
       v-model:visible="importVisible"
       modal
       header="Import Tools"
+      :append-to="overlayHost"
       :style="{ width: '500px' }"
     >
       <Textarea
