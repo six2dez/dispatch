@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Internal tooling change. The plugin's runtime behaviour is unchanged and
+there is nothing user-facing in this entry — Dispatch gains an automated
+test suite and the CI gating that runs it. The only edit to a runtime
+source file is two `export` keywords, added so two existing functions are
+reachable from a test.
+
+### Added
+
+- **Automated test suite.** A vitest 3.2.7 suite covers the pure
+  command-resolution logic: `shellEscape`, `resolvePlaceholders` and
+  `buildPlaceholderInfo` from the placeholder layer,
+  `extractAllBinariesFromCommand` from the binary detector,
+  `extractRootDomain` and `extractHeadersFromRaw` from request
+  extraction, and `getErrorMessage` from the frontend error helper. A
+  regression sweep runs all 19 shipped tool presets through binary
+  extraction and placeholder resolution, so a malformed preset fails at
+  the moment it is added. `pnpm test` runs the whole suite, and CI runs
+  it on every pull request and again on the release path.
+
+### Security
+
+- **Dependency and secret scanning now run in CI.** `trufflehog` fails
+  the build when a commit contains a credential — on every pull request,
+  and again before an immutable signed release is produced, because a
+  leaked secret that reaches a published artifact cannot be withdrawn.
+  `osv-scanner` reports known-vulnerable dependencies as an advisory
+  annotation rather than a hard failure, so shipping an urgent fix is
+  never blocked by a transitive CVE with no available patch.
+- **Supported-versions policy corrected.** `SECURITY.md` now states that
+  the `0.3.x` line receives security fixes, matching the shipped
+  `manifest.json` version, instead of the stale `0.2.x` row that named a
+  minor line two releases behind.
+
 ## 0.3.1 (2026-08-12)
 
 Style isolation release. Installing Dispatch no longer alters Caido's own
