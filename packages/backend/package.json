@@ -8,7 +8,8 @@
   "types": "src/index.ts",
   "scripts": {
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@caido/sdk-backend": "0.41.0"
