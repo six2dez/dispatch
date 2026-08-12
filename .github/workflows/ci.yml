@@ -58,3 +58,59 @@ jobs:
           path: dist/plugin_package.zip
           retention-days: 14
           if-no-files-found: error
+
+  # D-09: a committed secret fails the build. It is always real and always actionable,
+  # so this job carries no continue-on-error at either level.
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Mandatory, not defensive. The action resolves BASE and HEAD from the pull_request
+          # event payload and runs `trufflehog git file:///tmp/ --since-commit $BASE --branch
+          # $HEAD`; neither commit exists in a depth-1 clone, and the action hard-fails with
+          # "BASE and HEAD commits are the same" when they resolve identically.
+          fetch-depth: 0
+
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@v3.94.3
+        with:
+          # The action ref pins only the wrapper. The wrapper `docker run`s
+          # ghcr.io/trufflesecurity/trufflehog:${VERSION} and this input defaults to "latest",
+          # so omitting it leaves the scanner itself unpinned. No leading "v": the container
+          # tag 3.94.3 returns HTTP 200 from ghcr while v3.94.3 returns 404.
+          version: 3.94.3
+          # The CLI default is verified,unverified,unknown, and --fail on that default blocks
+          # the build on unverified detections — usually fixtures, docs examples or public keys.
+          extra_args: --results=verified,unknown
+
+  # D-09: dependency CVEs annotate without failing. A transitive CVE frequently has no
+  # available patch and may not be reachable, so blocking here would stop an urgent fix.
+  # D-10 keeps this off the release path for the same reason.
+  dependency-scan:
+    name: Dependency CVEs (advisory)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      # Default depth 1 is correct here: osv-scanner reads pnpm-lock.yaml and needs no history.
+      # No pnpm install either — installing would make it walk node_modules instead.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: OSV-Scanner
+        # Step level, never job level: continue-on-error is unsupported on a job that calls a
+        # reusable workflow via `uses:`, so the reusable-workflow variant would silently lose
+        # D-09's advisory intent and turn this into a blocking gate.
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@v2.3.5
+        with:
+          scan-args: |-
+            --recursive
+            ./
