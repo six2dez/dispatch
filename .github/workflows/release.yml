@@ -23,6 +23,44 @@ jobs:
         with:
           fetch-depth: 0
 
+      # D-10. Runs the pinned CLI container directly, and must keep doing so — do NOT
+      # "simplify" this back to the composite GitHub Action. On a push event the action
+      # evaluates COMMIT_LENGTH=$(printenv COMMIT_IDS | jq length) over
+      # toJson(github.event.commits.*.id) and, when that is 0, prints "No commits to scan"
+      # and exits 0 BEFORE running any scan. A tag creation has no before-to-after commit
+      # range, so this workflow's own trigger is exactly the case that short-circuits; the
+      # workflow_dispatch trigger takes a different branch of that script and does scan,
+      # which is what hides the problem. This release is signed and immutable, so a gate
+      # that goes green having scanned nothing cannot be retried after the fact.
+      #
+      # The image tag carries no leading "v": 3.94.3 returns HTTP 200 from ghcr, the
+      # v-prefixed tag returns 404 and would fail at docker run with a manifest error.
+      # Optional immutable pinning — append
+      # @sha256:8837fd74692f6da826b51bc008b6bcf0dd2d70d31d06792673872a235d9b7e39.
+      #
+      # `git file:///repo`, not `filesystem /repo`: the git source sees only committed
+      # history, so the untracked, gitignored private.pem / public.pem at the repo root are
+      # never read. fetch-depth: 0 above is what makes that full history present.
+      #
+      # KNOWN UNKNOWN — this step could not be smoke-tested before its first real run (no
+      # Docker daemon on the development machine), so a tag push is its first execution. The
+      # one plausible first-run failure is git's ownership check: the container runs as root
+      # against a bind mount owned by the runner's uid 1001, which can produce "detected
+      # dubious ownership in repository at '/repo'". If that happens, add these to the
+      # docker run invocation and re-run:
+      #   -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'
+      # Deliberately not enabled pre-emptively: it widens what git will read, it has not been
+      # observed to be needed, and the failure it guards against is loud and fires before
+      # signing, never silent.
+      - name: Secret scan
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo" -w /repo \
+            ghcr.io/trufflesecurity/trufflehog:3.94.3 \
+            git file:///repo \
+            --results=verified,unknown \
+            --fail --no-update --github-actions
+
       - name: Resolve version
         id: meta
         run: |
@@ -81,6 +119,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Build package
         run: pnpm build
