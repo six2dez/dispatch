@@ -80,10 +80,23 @@ describe("DEFAULT_PRESETS sweep", () => {
       // 01-REVIEW.md WR-01: all four %R presets used to write a 0-byte request.raw,
       // because the fixture's rawRequestBytes was an empty array. A file-count check
       // cannot tell "the raw request reached the file" from "an empty file was
-      // created", so this is what turns the %R half of the sweep from a count into a
-      // proof. The non-file presets create nothing and are left alone.
+      // created". The non-file presets create nothing and are left alone.
+      //
+      // Two assertions, because one of them cannot do the whole job — and probe P-F
+      // proved that rather than the comment merely claiming it. The byte comparison is
+      // self-referential against the fixture: both sides trace back to
+      // data.rawRequestBytes, so emptying that field moves both and the row stays
+      // green. What it does pin is placeholder.ts's wiring — that request.raw receives
+      // THIS field and not data.bodyBytes or data.headers.
+      //
+      // The decode is what makes the row non-vacuous. It reads the file back as text
+      // and compares it to a DIFFERENT fixture field, so a request.raw that is empty
+      // while the request text is 75 characters long is a contradiction the row can
+      // see. That is the WR-01 regression stated as an assertion instead of a hope.
       if (FILE_PRESET_IDS.has(preset.id)) {
-        expect(new Uint8Array(readFileSync(tempFiles[0]!))).toEqual(data.rawRequestBytes);
+        const written = new Uint8Array(readFileSync(tempFiles[0]!));
+        expect(written).toEqual(data.rawRequestBytes);
+        expect(new TextDecoder().decode(written)).toBe(data.rawRequest);
       }
     });
   }
