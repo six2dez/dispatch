@@ -43,14 +43,25 @@ export interface TerminalExitEvent {
   duration: number;
 }
 
+/**
+ * One row of the preview dialog's placeholder legend. The two string fields
+ * answer two different operator questions and neither may displace the other:
+ * `value` is what the request carried, so the operator can recognise the
+ * request; `escaped` is what the shell will actually receive. They differ
+ * exactly when quoting was applied. A legend that shows only `value` beside a
+ * quoted command trains the operator to misread the command they are approving.
+ */
+export interface PlaceholderInfo {
+  key: string;
+  value: string;
+  escaped: string;
+  used: boolean;
+}
+
 export interface PlaceholderPreview {
   resolvedCommand: string;
   template: string;
-  placeholders: {
-    key: string;
-    value: string;
-    used: boolean;
-  }[];
+  placeholders: PlaceholderInfo[];
 }
 
 export interface ToolDetectionResult {

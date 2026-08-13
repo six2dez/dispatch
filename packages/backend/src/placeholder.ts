@@ -1,7 +1,7 @@
 import { writeFileSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import type { RequestData, ResolvedCommand } from "./types";
+import type { PlaceholderInfo, RequestData, ResolvedCommand } from "./types";
 
 export function shellEscape(s: string): string {
   if (s.length === 0) return "''";
@@ -97,22 +97,50 @@ export function resolvePlaceholders(
 export function buildPlaceholderInfo(
   template: string,
   data: RequestData
-): { key: string; value: string; used: boolean }[] {
+): PlaceholderInfo[] {
   const { scheme, fullUrl } = buildFullUrl(data);
 
+  // For the keys the replacement map above passes through shellEscape. Deriving
+  // escaped from the same value argument is what keeps the legend and the resolved
+  // command from drifting: there is no second copy of the quoting rules to fall
+  // behind, and no row where escaped could be built from the wrong value.
+  const buildEscapedEntry = (key: string, value: string): PlaceholderInfo => ({
+    key,
+    value,
+    escaped: shellEscape(value),
+    used: template.includes(key),
+  });
+
+  // For entries the resolved command does not quote. escaped === value here is a
+  // claim, not an omission, so it gets its own constructor rather than a skipped
+  // field; each caller below states which failure mode its exemption prevents.
+  const buildVerbatimEntry = (key: string, value: string): PlaceholderInfo => ({
+    key,
+    value,
+    escaped: value,
+    used: template.includes(key),
+  });
+
   return [
-    { key: "%U", value: fullUrl, used: template.includes("%U") },
-    { key: "%H", value: data.host, used: template.includes("%H") },
-    { key: "%P", value: String(data.port), used: template.includes("%P") },
-    { key: "%A", value: data.path, used: template.includes("%A") },
-    { key: "%Q", value: data.query, used: template.includes("%Q") },
-    { key: "%M", value: data.method, used: template.includes("%M") },
-    { key: "%S", value: scheme, used: template.includes("%S") },
-    { key: "%C", value: data.cookies, used: template.includes("%C") },
-    { key: "%G", value: data.userAgent, used: template.includes("%G") },
-    { key: "%D", value: data.rootDomain, used: template.includes("%D") },
-    { key: "%R", value: "<raw request file>", used: template.includes("%R") },
-    { key: "%E", value: "<headers file>", used: template.includes("%E") },
-    { key: "%B", value: "<body file>", used: template.includes("%B") },
+    buildEscapedEntry("%U", fullUrl),
+    buildEscapedEntry("%H", data.host),
+    // %P is interpolated bare by the replacement map, so showing it quoted would
+    // have the legend claim quoting the command does not actually contain.
+    buildVerbatimEntry("%P", String(data.port)),
+    buildEscapedEntry("%A", data.path),
+    buildEscapedEntry("%Q", data.query),
+    buildEscapedEntry("%M", data.method),
+    // %S is the other bare entry in the replacement map, exempt for the same reason
+    // as %P: the legend must not report quoting that never happens.
+    buildVerbatimEntry("%S", scheme),
+    buildEscapedEntry("%C", data.cookies),
+    buildEscapedEntry("%G", data.userAgent),
+    buildEscapedEntry("%D", data.rootDomain),
+    // The three file entries are descriptions, not paths. This function is pure and
+    // writes no temp file, so no real path exists at legend-build time — escaping a
+    // description would show the operator a quoted string that is not in any command.
+    buildVerbatimEntry("%R", "<raw request file>"),
+    buildVerbatimEntry("%E", "<headers file>"),
+    buildVerbatimEntry("%B", "<body file>"),
   ];
 }

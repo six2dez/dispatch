@@ -204,11 +204,11 @@ describe("resolvePlaceholders file branch", () => {
 });
 
 describe("buildPlaceholderInfo", () => {
-  it("returns exactly 13 entries", () => {
-    expect(buildPlaceholderInfo("x", makeRequestData())).toHaveLength(13);
-  });
-
-  it("keys are in the fixed %U..%B order", () => {
+  // The count is folded into this description rather than asserted separately
+  // (01-REVIEW.md IN-02): toEqual on the full key array pins length and order at
+  // once, so a toHaveLength(13) beside it could never fail and 13 was a bare
+  // magic number.
+  it("returns exactly 13 keys, in the fixed %U..%B order", () => {
     const info = buildPlaceholderInfo("x", makeRequestData());
     expect(info.map((entry) => entry.key)).toEqual([
       "%U",
@@ -235,21 +235,79 @@ describe("buildPlaceholderInfo", () => {
 
   // The preview surface shows what the operator typed, so values here are the
   // unescaped originals — unlike resolvePlaceholders, which escapes the same value.
-  it("values are the unescaped originals", () => {
+  // `escaped` is the other half of that same contract: it is what the shell will
+  // actually receive, so the legend can answer both questions without either
+  // answer displacing the other. Its expected string below is deliberately a
+  // literal. This is one of the two rows that tell a working shellEscape from an
+  // identity one, and building the expectation by calling shellEscape would
+  // forfeit exactly the guarantee the row exists to give.
+  it("values are the unescaped originals and escaped carries the quoting", () => {
     const info = buildPlaceholderInfo("t %H", makeRequestData({ host: "$(id)" }));
     expect(info.find((entry) => entry.key === "%H")).toEqual({
       key: "%H",
       value: "$(id)",
+      escaped: "'$(id)'",
       used: true,
     });
+  });
+
+  // The second value-level pin, and the reason this legend work exists. SAFE-01
+  // took = off the allowlist, so an ordinary Cookie header is now quoted in the
+  // resolved command. If the legend kept showing only the raw value, the operator
+  // would approve a command containing a string the legend never displayed. Both
+  // expected strings are literals, for the same reason as the row above.
+  it("surfaces the SAFE-01 quoting of an ordinary Cookie value on %C", () => {
+    const info = buildPlaceholderInfo("t %C", makeRequestData());
+    const cookieEntry = info.find((entry) => entry.key === "%C");
+    if (!cookieEntry) throw new Error("no %C entry in the placeholder legend");
+    expect(cookieEntry.value).toBe("session=abc");
+    expect(cookieEntry.escaped).toBe("'session=abc'");
   });
 
   it("the three file entries carry their fixed descriptions", () => {
     const info = buildPlaceholderInfo("x", makeRequestData());
     expect(info.slice(-3)).toEqual([
-      { key: "%R", value: "<raw request file>", used: false },
-      { key: "%E", value: "<headers file>", used: false },
-      { key: "%B", value: "<body file>", used: false },
+      { key: "%R", value: "<raw request file>", escaped: "<raw request file>", used: false },
+      { key: "%E", value: "<headers file>", escaped: "<headers file>", used: false },
+      { key: "%B", value: "<body file>", escaped: "<body file>", used: false },
     ]);
+  });
+
+  // A wiring test, and deliberately nothing more. The comparison below is
+  // self-referential: both sides call the same encoder, so it holds under ANY
+  // implementation of shellEscape, including the identity function. It cannot
+  // tell a working encoder from a collapsed one, and reading it as if it could is
+  // the mistake this comment exists to prevent.
+  //
+  // What it does pin is the builder's wiring — that every scalar key routes
+  // through the encoder at all, and that %P and %S are the only scalar keys
+  // exempt from it. No literal row would catch a key that was simply never wired,
+  // which is why this walk is worth keeping despite what it cannot prove.
+  //
+  // The escaped *values* are pinned by the two rows above, whose expected strings
+  // are literals and never call shellEscape: "values are the unescaped originals
+  // and escaped carries the quoting" (%H) and "surfaces the SAFE-01 quoting of an
+  // ordinary Cookie value on %C" (%C). Under an identity shellEscape this walk
+  // stays green and those two go red. That is the division of labour.
+  it("routes every scalar key through shellEscape except %P and %S", () => {
+    // %P and %S are bare in the replacement map; %R/%E/%B are descriptions rather
+    // than request values and no command ever carries them.
+    const verbatimKeys = ["%P", "%S", "%R", "%E", "%B"];
+    const info = buildPlaceholderInfo("x", makeRequestData({ host: "$(id)", path: "/a b" }));
+
+    let quotedCount = 0;
+    for (const entry of info) {
+      if (verbatimKeys.includes(entry.key)) {
+        expect(entry.escaped).toBe(entry.value);
+      } else {
+        expect(entry.escaped).toBe(shellEscape(entry.value));
+      }
+      if (entry.escaped !== entry.value) quotedCount += 1;
+    }
+
+    // Non-vacuity guard, and the only assertion here that is not self-referential:
+    // it fails if the fixture ever stops carrying values that need quoting, which
+    // would leave every branch above passing trivially.
+    expect(quotedCount).toBe(5);
   });
 });
