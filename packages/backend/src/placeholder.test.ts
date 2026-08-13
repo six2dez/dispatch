@@ -34,14 +34,21 @@ describe("shellEscape", () => {
     // $ is off the allowlist at placeholder.ts:9, but every other $ case in this file
     // also carries ( and ), which stay off the allowlist and keep the value quoted for
     // the wrong reason — so widening the allowlist by the single character $ passed a
-    // full run. $HOME and $IFS are the bare shapes that die with it. Phase 7
-    // (SAFE-01/SAFE-02) is scheduled to edit that regex, so it must not move silently.
+    // full run. $HOME and $IFS are the bare shapes that die with it. SAFE-01 has since
+    // removed ~ and = from that regex (D-13), and Phase 7 still owns SAFE-02, so the
+    // regex remains a phase-owned edit target and still must not move silently.
     ["$HOME", "'$HOME'"],
     ["${HOME}", "'${HOME}'"],
     ["$IFS", "'$IFS'"],
     // Redirection is shape-changing rather than value-changing: unquoted, the value
     // writes a file instead of being read as an operand.
     [">out", "'>out'"],
+    // Bare on purpose, and this is the lesson CR-01 paid for: the ~/x and a=b rows
+    // below both carry a / and a b, so a one-character regrowth of the allowlist could
+    // in principle leave them quoted for some other reason. A single character cannot
+    // be quoted for another reason, so these two are what actually pin the removal.
+    ["~", "'~'"],
+    ["=", "'='"],
   ];
 
   for (const [input, expected] of cases) {
@@ -50,7 +57,7 @@ describe("shellEscape", () => {
     });
   }
 
-  // --- Pinned allowlist gaps ---
+  // --- Allowlist: two gaps still pinned, two closed by SAFE-01 ---
 
   // The allowlist at placeholder.ts:9 accepts a leading dash, so a request-derived
   // value reaches the tool as a flag rather than as an operand. Argument injection,
@@ -66,18 +73,20 @@ describe("shellEscape", () => {
     expect(shellEscape("-rf")).toBe("-rf");
   });
 
-  // ~ is in the allowlist, so the value is handed to the login shell unquoted and
-  // the shell expands it to $HOME before the tool ever sees it. Phase 7 / SAFE-01
-  // removes ~ from the allowlist.
-  it('"~/x" -> ~/x unquoted (SAFE-01 gap, Phase 7)', () => {
-    expect(shellEscape("~/x")).toBe("~/x");
+  // SAFE-01, closed here rather than in Phase 7 (D-13). The quoting is what guarantees
+  // the tool receives the literal ~/x the request carried: put ~ back on the allowlist
+  // and the value is handed to the login shell bare, which expands it to $HOME first,
+  // so the tool reads a local path that was never in the request.
+  it('"~/x" -> quoted, so the login shell cannot expand it to $HOME', () => {
+    expect(shellEscape("~/x")).toBe("'~/x'");
   });
 
-  // = is in the allowlist, so an unquoted a=b in leading position reads as an
-  // environment assignment to the shell instead of an argument. Phase 7 / SAFE-01
-  // removes = from the allowlist.
-  it('"a=b" -> a=b unquoted (SAFE-01 gap, Phase 7)', () => {
-    expect(shellEscape("a=b")).toBe("a=b");
+  // SAFE-01, closed here rather than in Phase 7 (D-13). The quoting is what guarantees
+  // a=b arrives as an operand: put = back on the allowlist and an unquoted a=b in
+  // leading position is read by the shell as an environment assignment, so the tool is
+  // invoked with one argument fewer and with an altered environment.
+  it('"a=b" -> quoted, so a leading assignment cannot alter the environment', () => {
+    expect(shellEscape("a=b")).toBe("'a=b'");
   });
 });
 
@@ -89,6 +98,11 @@ describe("resolvePlaceholders", () => {
   // measured on %A, %C, %D and %M, which each survived a full run before the rows below
   // existed. The one key held outside this table is %G, pinned by the exact preset-curl
   // row at presets.test.ts:90-93.
+  //
+  // Second invariant, from SAFE-01: each character removed from the allowlist needs both
+  // a bare row in the shellEscape table above and a row here that carries it through a
+  // request-derived key. The bare row proves the character alone is quoted; this one
+  // proves the quoting survives the path a real request actually takes.
   const cases: [string, Partial<RequestData>, string][] = [
     ["t %U", {}, "t https://example.com/a"],
     ["t %U", { tls: false, port: 80 }, "t http://example.com/a"],
@@ -113,6 +127,13 @@ describe("resolvePlaceholders", () => {
     ["t %C", { cookies: "s=$(id)" }, "t 's=$(id)'"],
     ["t %D", { rootDomain: "a b.com" }, "t 'a b.com'"],
     ["t %M", { method: "GET;id" }, "t 'GET;id'"],
+    // The two SAFE-01 characters carried through real request-derived keys. A Cookie
+    // header always contains =, which makes %C the shape SAFE-01 actually describes,
+    // and a tilde in a URL path is ordinary rather than exotic. Both values are written
+    // out here instead of leaning on the fixture defaults, so 01-10's fixture work
+    // cannot quietly retire the coverage.
+    ["t %C", { cookies: "session=abc" }, "t 'session=abc'"],
+    ["t %A", { path: "/~user" }, "t '/~user'"],
   ];
 
   for (const [template, overrides, expected] of cases) {

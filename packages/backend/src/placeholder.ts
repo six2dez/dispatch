@@ -5,8 +5,17 @@ import type { RequestData, ResolvedCommand } from "./types";
 
 export function shellEscape(s: string): string {
   if (s.length === 0) return "''";
-  // Only quote if the value contains shell-special characters
-  if (/^[a-zA-Z0-9._\-\/:@=,+%~]+$/.test(s)) {
+  // A value matching this class is handed to the login shell unquoted, so any character
+  // the shell rewrites before the tool sees it must not be a member. SAFE-01 removed two:
+  // the shell expands a leading ~ to $HOME, and reads a leading a=b as an environment
+  // assignment rather than an operand — in both cases the tool receives something other
+  // than the bytes the request carried. The rule that follows is that this list only ever
+  // loses members: quoting a value that did not need quoting is harmless, so shrinking is
+  // always safe while growing re-opens the boundary. Shrinking is free at exactly one of
+  // the two call sites. The other is detector.ts:36, which runs an operator-authored
+  // binary token through this same function, so a token written as ~/go/bin/nuclei is now
+  // quoted, no longer tilde-expands, and detects as not installed.
+  if (/^[a-zA-Z0-9._\-\/:@,+%]+$/.test(s)) {
     return s;
   }
   return `'${s.replace(/'/g, "'\\''")}'`;
