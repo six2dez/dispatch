@@ -69,11 +69,14 @@ function handleKeydown(e: KeyboardEvent): void {
   }
 }
 
-const usedPlaceholders = computed(() => {
+// Each row answers two operator questions: what the request carried, and what the
+// shell will actually receive. `quoted` is false for the common allowlist-clean
+// value, where the two strings are identical and a second rendering would be noise.
+const usedPlaceholders = computed((): { key: string; value: string; escaped: string; quoted: boolean }[] => {
   if (!preview.value) return [];
   return preview.value.placeholders
     .filter((p) => p.used)
-    .map((p) => ({ key: p.key, value: p.value }));
+    .map((p) => ({ key: p.key, value: p.value, escaped: p.escaped, quoted: p.escaped !== p.value }));
 });
 
 defineExpose({ open });
@@ -131,6 +134,12 @@ defineExpose({ open });
           </td>
           <td class="ph-value">
             {{ ph.value }}
+            <!-- Only when quoting was applied: the command above contains this
+                 string, not the raw one, and the operator is approving that. -->
+            <span
+              v-if="ph.quoted"
+              class="ph-escaped"
+            >shell receives {{ ph.escaped }}</span>
           </td>
         </tr>
       </table>
@@ -218,5 +227,15 @@ defineExpose({ open });
   word-break: break-all;
   padding: 3px 8px;
   color: var(--c-fg-subtle, #aaa);
+}
+
+/* Rendered only where the escaped form differs, and deliberately less muted than
+   .ph-value: the raw value is context, the quoted form is what the command the
+   operator is about to approve actually contains. */
+.ph-escaped {
+  display: block;
+  margin-top: 2px;
+  font-family: monospace;
+  color: var(--c-fg-default, #e0e0e0);
 }
 </style>
