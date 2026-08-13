@@ -2,11 +2,14 @@
 
 ## Unreleased
 
-Internal tooling change. The plugin's runtime behaviour is unchanged and
-there is nothing user-facing in this entry — Dispatch gains an automated
-test suite and the CI gating that runs it. The only edit to a runtime
-source file is two `export` keywords, added so two existing functions are
-reachable from a test.
+Test suite, CI gating, and one deliberate change to command escaping. Most
+of this entry is internal — Dispatch gains an automated test suite and the
+CI that runs it — but the escaping change does alter what a dispatched tool
+receives, and it has one user-visible cost. Read the first two Security
+bullets before upgrading if any of your tools are configured with a
+`~`-relative binary path. Two runtime source files changed: `placeholder.ts`
+for the escaping fix, and `request-data.ts` for two `export` keywords added
+so two existing functions are reachable from a test.
 
 ### Added
 
@@ -23,6 +26,27 @@ reachable from a test.
 
 ### Security
 
+- **A request value containing `~` or `=` is no longer rewritten by the
+  shell before your tool sees it.** Both characters are now quoted on the
+  way into the command, so the value arrives at the tool exactly as it
+  appeared in the request, instead of `~/x` being expanded to a path inside
+  your home directory and a leading `a=b` being read as an environment
+  assignment rather than as an argument.
+- **The cost: a tool configured with a `~`-relative binary path now shows
+  as not installed.** The binary-detection probe quotes the configured path
+  through the same escaping, so a command starting with `~/go/bin/nuclei`
+  is no longer expanded by the shell and the tool picker reports it as
+  missing — the tool itself still runs correctly, only the badge is wrong.
+  Write the path out in full (`/Users/you/go/bin/nuclei`) to get the badge
+  back; `$HOME/go/bin/nuclei` will not work, and did not before this change
+  either, because `$` has never been on the escaping allowlist.
+- **Argument injection remains open.** A request value beginning with `-`
+  can still be read by the dispatched tool as a flag rather than as an
+  operand, and quoting cannot close it — `'-rf'` is still `-rf` to the
+  tool, so the fix is explicit `--` separators in the shipped command
+  templates. The repository ships two executable tests that prove the gap
+  rather than hiding it; it is tracked as SAFE-02 for the next hardening
+  release, and `SECURITY.md` invites reports on exactly this class.
 - **Dependency and secret scanning now run in CI.** `trufflehog` fails
   the build when a commit contains a credential — on every pull request,
   and again before an immutable signed release is produced, because a
