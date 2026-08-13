@@ -154,9 +154,20 @@ jobs:
             --results=verified,unknown \
             --fail --no-update --github-actions
 
-  # D-09: dependency CVEs annotate without failing. A transitive CVE frequently has no
-  # available patch and may not be reachable, so blocking here would stop an urgent fix.
-  # D-10 keeps this off the release path for the same reason.
+  # D-09: dependency CVEs are reported but never fail the job. A transitive CVE frequently has
+  # no available patch and may not be reachable, so blocking here would stop an urgent fix from
+  # shipping. D-10 keeps this off the release path for the same reason.
+  #
+  # "Reported" means the run summary, not the log. Until this step existed the only record of a
+  # finding was stdout inside a passing job — a green check that had reported nothing, which is
+  # the failure this phase exists to eliminate. The scanner now writes a markdown table to
+  # osv-results.md and the step below appends it to $GITHUB_STEP_SUMMARY, so a CVE is visible on
+  # the run page without opening the job log.
+  #
+  # SARIF was the alternative and was rejected on three counts: it needs security-events: write
+  # on a repository that signs releases, it adds a third-party action to pin, and it would file
+  # the 34 advisories known today — all dev-tooling transitives, several reached through vitest
+  # itself — as permanent code-scanning alerts that each need dismissing.
   dependency-scan:
     name: Dependency CVEs (advisory)
     runs-on: ubuntu-latest
@@ -176,6 +187,51 @@ jobs:
         continue-on-error: true
         uses: google/osv-scanner-action/osv-scanner-action@v2.3.5
         with:
+          # --output/--format first, then the scan target: the argument order google's own
+          # osv-scanner-reusable.yml uses at this same ref, and what makes --output land in the
+          # workspace where the next step can read it back.
+          #
+          # There is no --skip-git here, and that is a measured decision rather than a dropped
+          # default. The flag was REMOVED in osv-scanner v2 — the migration guide at v2.3.5
+          # reads "--skip-git flag removed, replaced with --include-git-root" — and git-root
+          # scanning is off by default in v2, so the behaviour that flag used to buy is what
+          # this invocation already gets. Passing it would abort the scanner on an unknown flag,
+          # which the continue-on-error above would swallow into a green job that scanned
+          # nothing. `--recursive ./` is byte-identical to this action's own default scan-args
+          # at the pinned version, so nothing about what gets scanned diverges from the default.
           scan-args: |-
+            --format=markdown
+            --output=osv-results.md
             --recursive
             ./
+
+      # if: always() is mandatory, not decorative. The scanner exits non-zero when it finds a
+      # CVE, so without it this step would be skipped on exactly the runs that have something
+      # to report. It carries no continue-on-error of its own: a findings sink that fails
+      # silently is how WR-03 happened, so if this cannot report, the job should go red.
+      - name: Publish findings to the run summary
+        if: always()
+        run: |
+          if [[ ! -f osv-results.md ]]; then
+            echo "::warning::OSV-Scanner wrote no results file — this run reported nothing."
+          fi
+          {
+            echo "## Dependency CVEs (advisory)"
+            echo
+            if [[ -s osv-results.md ]]; then
+              # Bounded on purpose: a step summary over 1 MiB fails the step, and a failing
+              # step here would turn this advisory job into a blocking one, which is the one
+              # thing D-09 forbids.
+              head -c 512000 osv-results.md
+              echo
+              echo "_Advisory only. This job does not fail on a finding (D-09): a transitive"
+              echo "CVE often has no available patch, and blocking would stop an urgent fix._"
+            elif [[ -f osv-results.md ]]; then
+              echo "No known vulnerabilities in pnpm-lock.yaml."
+            else
+              echo "> [!WARNING]"
+              echo "> OSV-Scanner wrote no results file, so it failed before reporting."
+              echo "> **This run reported nothing** — do not read the green check as a clean"
+              echo "> bill of health. Open the scanner step's log to see why it exited."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
