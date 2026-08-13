@@ -1,9 +1,10 @@
-import { readFileSync, rmSync, statSync } from "fs";
-import { basename, dirname } from "path";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "fs";
+import { tmpdir } from "os";
+import { basename, dirname, join } from "path";
 import { describe, it, expect, afterEach } from "vitest";
 import { buildPlaceholderInfo, resolvePlaceholders, shellEscape } from "./placeholder";
 import { makeRequestData } from "./test-fixtures";
-import type { RequestData } from "./types";
+import type { RequestData, ResolvedCommand } from "./types";
 
 // Directories created by the real filesystem branch below. Registered before any
 // assertion runs, so a red run cannot leak a <tmpdir>/dispatch-* directory.
@@ -200,6 +201,103 @@ describe("resolvePlaceholders file branch", () => {
     expect(command).toBe(
       `tool ${shellEscape(tempFiles[0]!)} ${shellEscape(tempFiles[1]!)} ${shellEscape(tempFiles[2]!)}`
     );
+  });
+
+  // The three rows above cannot tell a working shellEscape from a missing one, and
+  // neither could any exact assertion against an ordinary temp path. mkdtempSync
+  // (placeholder.ts:49) builds its path out of letters, digits, /, ., _ and -, every one
+  // of which shellEscape leaves unquoted, so "escaped" and "not escaped at all" produce
+  // the same string. The rows above compound that by building their expected command
+  // with shellEscape on BOTH sides, so they hold under any mutation of it whatsoever.
+  //
+  // The three rows below supply the missing distinction. os.tmpdir() reads its POSIX
+  // environment override at call time, so pointing it at a directory whose name contains
+  // a space forces a temp path that genuinely needs quoting, and the expected string is
+  // then built from the raw returned path plus literal single quotes — never from the
+  // encoder under test. Drop the shellEscape from any one of placeholder.ts:87-89 and
+  // the matching row dies. Follow-up to 01-REVIEW.md WR-01.
+  //
+  // One row per key rather than one covering all three: %R, %E and %B are escaped by
+  // three separate calls, so a mutation of one is invisible to a row covering another.
+  //
+  // POSIX-only, exactly like the 0o600 assertions above (01-REVIEW.md IN-07) — the
+  // override is not read on Windows. These rows inherit that constraint, not widen it.
+  //
+  // The save/restore sits in a try/finally immediately around the call, and the reason
+  // is scope rather than survival: vitest does run afterEach on a throwing test, so an
+  // afterEach restore would fire too. What this buys is that nothing else in the test,
+  // and nothing any later-added hook does, runs while the process-wide override points
+  // somewhere unusual.
+  it("%R is quoted when the temp root's name contains a space", () => {
+    const spacedRoot = mkdtempSync(join(tmpdir(), "dispatch tmp "));
+    createdDirs.push(spacedRoot);
+
+    const savedTmpdir = process.env.TMPDIR;
+    let resolved: ResolvedCommand;
+    try {
+      process.env.TMPDIR = spacedRoot;
+      resolved = resolvePlaceholders("tool -r %R", makeRequestData());
+    } finally {
+      if (savedTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmpdir;
+    }
+    for (const tempFile of resolved.tempFiles) {
+      createdDirs.push(dirname(tempFile));
+    }
+
+    expect(resolved.tempFiles).toHaveLength(1);
+    const file = resolved.tempFiles[0]!;
+    // Without this the row degrades silently into an ordinary clean-path test — which
+    // would then pass just as happily with no escaping at all — if the override ever
+    // stops being honoured.
+    expect(file.includes(" ")).toBe(true);
+    expect(resolved.command).toBe(`tool -r '${file}'`);
+  });
+
+  it("%E is quoted when the temp root's name contains a space", () => {
+    const spacedRoot = mkdtempSync(join(tmpdir(), "dispatch tmp "));
+    createdDirs.push(spacedRoot);
+
+    const savedTmpdir = process.env.TMPDIR;
+    let resolved: ResolvedCommand;
+    try {
+      process.env.TMPDIR = spacedRoot;
+      resolved = resolvePlaceholders("tool -e %E", makeRequestData());
+    } finally {
+      if (savedTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmpdir;
+    }
+    for (const tempFile of resolved.tempFiles) {
+      createdDirs.push(dirname(tempFile));
+    }
+
+    expect(resolved.tempFiles).toHaveLength(1);
+    const file = resolved.tempFiles[0]!;
+    expect(file.includes(" ")).toBe(true);
+    expect(resolved.command).toBe(`tool -e '${file}'`);
+  });
+
+  it("%B is quoted when the temp root's name contains a space", () => {
+    const spacedRoot = mkdtempSync(join(tmpdir(), "dispatch tmp "));
+    createdDirs.push(spacedRoot);
+
+    const savedTmpdir = process.env.TMPDIR;
+    let resolved: ResolvedCommand;
+    try {
+      process.env.TMPDIR = spacedRoot;
+      resolved = resolvePlaceholders("tool -b %B", makeRequestData());
+    } finally {
+      if (savedTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = savedTmpdir;
+    }
+    for (const tempFile of resolved.tempFiles) {
+      createdDirs.push(dirname(tempFile));
+    }
+
+    expect(resolved.tempFiles).toHaveLength(1);
+    const file = resolved.tempFiles[0]!;
+    expect(file.includes(" ")).toBe(true);
+    expect(resolved.command).toBe(`tool -b '${file}'`);
   });
 });
 
