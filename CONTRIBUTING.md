@@ -107,10 +107,10 @@ package is signed. A red suite blocks a release, not just a PR.
 **Where they live.** Beside their subject, as `src/**/*.test.ts` — `placeholder.ts` is covered by
 `packages/backend/src/placeholder.test.ts`. That glob is the entirety of what both
 `vitest.config.ts` files collect, and it is the only place a test counts. A file outside `src/` —
-in `packages/backend/test/` or `src/__tests__/`, the two conventional alternatives — is **not
-collected**, and nothing tells you: the remaining files still match, so vitest reports the
-surviving count and exits 0. The result is a green `pnpm test` and a green CI for a test that
-never ran. Put it in `src/`, next to the module it covers.
+in `packages/backend/test/` or `src/__tests__/`, the two conventional alternatives — is simply
+**not collected**, and nothing tells you: the remaining files still match, so vitest reports
+the surviving count and exits 0. The result is a green `pnpm test` and a green CI for a test
+that never ran. Put it in `src/`, next to the module it covers.
 
 **How to run them.** `pnpm test` runs the whole workspace. For a tight loop, filter to one
 package:
