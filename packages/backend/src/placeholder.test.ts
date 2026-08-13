@@ -31,6 +31,17 @@ describe("shellEscape", () => {
     ["*", "'*'"],
     [" ", "' '"],
     ["%U", "%U"],
+    // $ is off the allowlist at placeholder.ts:9, but every other $ case in this file
+    // also carries ( and ), which stay off the allowlist and keep the value quoted for
+    // the wrong reason — so widening the allowlist by the single character $ passed a
+    // full run. $HOME and $IFS are the bare shapes that die with it. Phase 7
+    // (SAFE-01/SAFE-02) is scheduled to edit that regex, so it must not move silently.
+    ["$HOME", "'$HOME'"],
+    ["${HOME}", "'${HOME}'"],
+    ["$IFS", "'$IFS'"],
+    // Redirection is shape-changing rather than value-changing: unquoted, the value
+    // writes a file instead of being read as an operand.
+    [">out", "'>out'"],
   ];
 
   for (const [input, expected] of cases) {
@@ -71,6 +82,13 @@ describe("shellEscape", () => {
 });
 
 describe("resolvePlaceholders", () => {
+  // Invariant: every key in the replacements map (placeholder.ts:66-77) except the two
+  // documented exceptions %P and %S must have at least one row below whose value
+  // requires quoting. A key reached only through the fixture's allowlist-clean defaults
+  // resolves identically escaped or not, so dropping its shellEscape lands green —
+  // measured on %A, %C, %D and %M, which each survived a full run before the rows below
+  // existed. The one key held outside this table is %G, pinned by the exact preset-curl
+  // row at presets.test.ts:90-93.
   const cases: [string, Partial<RequestData>, string][] = [
     ["t %U", {}, "t https://example.com/a"],
     ["t %U", { tls: false, port: 80 }, "t http://example.com/a"],
@@ -88,6 +106,13 @@ describe("resolvePlaceholders", () => {
     ["t %H", { host: "%U.evil.com" }, "t %U.evil.com"],
     // Request-derived shell metacharacters change the command's values, never its shape.
     ["t %H", { host: "$(id)" }, "t '$(id)'"],
+    // The same guarantee for the four request-derived keys the fixture reaches only
+    // with benign values: the path, the raw Cookie header, the method and the host-
+    // derived root domain are all attacker-influenceable through a proxied request.
+    ["t %A", { path: "/a b;id" }, "t '/a b;id'"],
+    ["t %C", { cookies: "s=$(id)" }, "t 's=$(id)'"],
+    ["t %D", { rootDomain: "a b.com" }, "t 'a b.com'"],
+    ["t %M", { method: "GET;id" }, "t 'GET;id'"],
   ];
 
   for (const [template, overrides, expected] of cases) {
