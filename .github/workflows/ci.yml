@@ -61,8 +61,22 @@ jobs:
 
   # D-09: a committed secret fails the build. It is always real and always actionable,
   # so this job carries no continue-on-error at either level.
+  #
+  # Scoped to pull_request deliberately. The composite action derives its scan range from the
+  # event payload: on a push it evaluates COMMIT_LENGTH=$(printenv COMMIT_IDS | jq length)
+  # over github.event.commits and, when that is 0, prints "No commits to scan" and exits 0
+  # BEFORE scanning anything — the same short-circuit release.yml documents at length above its
+  # own Secret scan step. Even a non-empty array is truncated by GitHub to 20 entries, so a
+  # larger push would leave its earliest commits outside the range. Left unguarded, this job
+  # would render a green check on the push path having scanned nothing, or only part of it.
+  #
+  # push coverage: the secret-scan-push job below. It runs the same pinned scanner as a
+  # container over full committed history, which has no event payload to short-circuit on, so
+  # between the two jobs every commit that reaches main is scanned by one or the other. Both
+  # block. release.yml then re-scans full history with --fail before anything is signed.
   secret-scan:
     name: Secret scan
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,10 +85,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Mandatory, not defensive. The action resolves BASE and HEAD from the pull_request
-          # event payload and runs `trufflehog git file:///tmp/ --since-commit $BASE --branch
-          # $HEAD`; neither commit exists in a depth-1 clone, and the action hard-fails with
-          # "BASE and HEAD commits are the same" when they resolve identically.
+          # Mandatory, not defensive, and full history is required regardless of trigger —
+          # for a different reason on each, which is why this note now covers both rather
+          # than only the one this job runs on. On pull_request (this job) the action
+          # resolves BASE and HEAD from the event payload and runs `trufflehog git
+          # file:///tmp/ --since-commit $BASE --branch $HEAD`; neither commit exists in a
+          # depth-1 clone, and the action hard-fails with "BASE and HEAD commits are the
+          # same" when they resolve identically. On push (secret-scan-push below) the history
+          # IS the scan range, so a depth-1 clone would silently narrow a full-history scan
+          # to a single commit and still exit 0.
           fetch-depth: 0
 
       - name: TruffleHog
@@ -88,6 +107,52 @@ jobs:
           # The CLI default is verified,unverified,unknown, and --fail on that default blocks
           # the build on unverified detections — usually fixtures, docs examples or public keys.
           extra_args: --results=verified,unknown
+
+  # push coverage: the other half of the split above, and the reason the guard on secret-scan
+  # is a scoping decision rather than a hole. Pushing straight to main is this repository's
+  # primary workflow — all 21 commits of this phase landed that way, with no merge commit
+  # among them — so delegating push coverage to the release gate would have left the secret
+  # gate effectively unexercised until the next tag, on the one path that actually gets used.
+  #
+  # Runs the pinned CLI container instead of the composite action, for precisely the reason
+  # release.yml gives above its own Secret scan step: that action short-circuits on a push
+  # event before scanning, and this job's only trigger IS a push. `git file:///repo` reads
+  # committed history only, so the untracked, gitignored private.pem / public.pem at the repo
+  # root are never scanned.
+  #
+  # The invocation is kept byte-identical to the release-path one on purpose — this job is
+  # that step's canary. release.yml's Secret scan has never executed anywhere (no Docker
+  # daemon on the development machine) and its one known first-run failure is git's ownership
+  # check against the root-owned bind mount. If that fires it now fires here, on a push, where
+  # the fix is cheap, rather than mid-release on a path that signs an immutable artifact. The
+  # remedy is recorded verbatim in release.yml above that step; apply it to both invocations
+  # together so the two cannot drift.
+  #
+  # Blocking, like its sibling: D-09 makes no exception for the push path. A secret already
+  # pushed to a public repository cannot be un-pushed by a red check, but the red check is
+  # what makes it actionable within minutes instead of at the next release.
+  secret-scan-push:
+    name: Secret scan (push)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Here the history is the scan range itself — see the sibling job's note above.
+          fetch-depth: 0
+
+      - name: TruffleHog
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/repo" -w /repo \
+            ghcr.io/trufflesecurity/trufflehog:3.94.3 \
+            git file:///repo \
+            --results=verified,unknown \
+            --fail --no-update --github-actions
 
   # D-09: dependency CVEs annotate without failing. A transitive CVE frequently has no
   # available patch and may not be reachable, so blocking here would stop an urgent fix.
