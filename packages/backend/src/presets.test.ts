@@ -1,4 +1,4 @@
-import { rmSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { dirname } from "path";
 import { describe, it, expect, afterEach } from "vitest";
 import { DEFAULT_PRESETS } from "./presets";
@@ -64,7 +64,8 @@ describe("DEFAULT_PRESETS sweep", () => {
         EXPECTED_BINARIES[preset.id]
       );
 
-      const { command, tempFiles } = resolvePlaceholders(preset.command, makeRequestData());
+      const data = makeRequestData();
+      const { command, tempFiles } = resolvePlaceholders(preset.command, data);
       for (const tempFile of tempFiles) {
         createdDirs.push(dirname(tempFile));
       }
@@ -75,6 +76,15 @@ describe("DEFAULT_PRESETS sweep", () => {
       // %-prefixed.
       expect(command).not.toMatch(/%[A-Z]/);
       expect(tempFiles).toHaveLength(FILE_PRESET_IDS.has(preset.id) ? 1 : 0);
+
+      // 01-REVIEW.md WR-01: all four %R presets used to write a 0-byte request.raw,
+      // because the fixture's rawRequestBytes was an empty array. A file-count check
+      // cannot tell "the raw request reached the file" from "an empty file was
+      // created", so this is what turns the %R half of the sweep from a count into a
+      // proof. The non-file presets create nothing and are left alone.
+      if (FILE_PRESET_IDS.has(preset.id)) {
+        expect(new Uint8Array(readFileSync(tempFiles[0]!))).toEqual(data.rawRequestBytes);
+      }
     });
   }
 });
@@ -95,10 +105,16 @@ describe("resolved command is exact", () => {
 
   for (const [presetId, overrides, expected] of cases) {
     it(presetId, () => {
+      // 01-REVIEW.md IN-03. The bare defined-ness assertion this replaces already
+      // threw, so the non-null access on the next line never ran and no real message
+      // was being buried — the one genuine defect is that the failure never named the
+      // id it wanted. A narrowing throw fixes that and removes the non-null assertion.
+      // Note this is message quality on top of existing coverage: the corpus test
+      // above already goes red if a preset id disappears.
       const preset = DEFAULT_PRESETS.find((entry) => entry.id === presetId);
-      expect(preset).toBeDefined();
+      if (!preset) throw new Error(`preset ${presetId} not found in DEFAULT_PRESETS`);
 
-      const { command } = resolvePlaceholders(preset!.command, makeRequestData(overrides));
+      const { command } = resolvePlaceholders(preset.command, makeRequestData(overrides));
       expect(command).toBe(expected);
     });
   }
