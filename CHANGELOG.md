@@ -7,9 +7,14 @@ of this entry is internal — Dispatch gains an automated test suite and the
 CI that runs it — but the escaping change does alter what a dispatched tool
 receives, and it has one user-visible cost. Read the first two Security
 bullets before upgrading if any of your tools are configured with a
-`~`-relative binary path. Two runtime source files changed: `placeholder.ts`
-for the escaping fix, and `request-data.ts` for two `export` keywords added
-so two existing functions are reachable from a test.
+`~`-relative binary path. Four runtime source files changed — counting
+everything under `packages/*/src/` except the co-located `*.test.ts` files
+and the `test-fixtures.ts` helper, which are test scaffolding and reach no
+build: `placeholder.ts` for the escaping fix and the split that lets the
+preview legend show the escaped form, `request-data.ts` for two `export`
+keywords added so two existing functions are reachable from a test,
+`types.ts` for the `PlaceholderInfo` contract that legend is built on, and
+`PreviewDialog.vue` for the legend itself.
 
 ### Added
 
@@ -23,6 +28,16 @@ so two existing functions are reachable from a test.
   extraction and placeholder resolution, so a malformed preset fails at
   the moment it is added. `pnpm test` runs the whole suite, and CI runs
   it on every pull request and again on the release path.
+- **The preview dialog now shows what the shell will actually receive.**
+  Where a request value had to be quoted on its way into the command —
+  which the escaping change below makes the normal case for any `Cookie`
+  header — the placeholder legend shows the quoted form beneath the raw
+  one, so the command in the textarea and the legend beside it can no
+  longer disagree. On a multi-request dispatch the textarea holds the
+  unresolved template rather than a resolved command, so there the legend
+  says `1st request receives` instead of claiming the shell receives that
+  exact string: the quoting shown is the first request's, and each of the
+  others is resolved separately from the same template.
 
 ### Security
 
@@ -49,11 +64,21 @@ so two existing functions are reachable from a test.
   release, and `SECURITY.md` invites reports on exactly this class.
 - **Dependency and secret scanning now run in CI.** `trufflehog` fails
   the build when a commit contains a credential — on every pull request,
-  and again before an immutable signed release is produced, because a
-  leaked secret that reaches a published artifact cannot be withdrawn.
-  `osv-scanner` reports known-vulnerable dependencies as an advisory
-  annotation rather than a hard failure, so shipping an urgent fix is
-  never blocked by a transitive CVE with no available patch.
+  on every push to `main`, and again before an immutable signed release is
+  produced, because a leaked secret that reaches a published artifact
+  cannot be withdrawn. All three invocations keep the `unverified` result
+  class (`--results=verified,unverified,unknown`), which is the class a
+  self-signed key registered nowhere lands in; a narrower filter scans,
+  finds it, and still exits 0. **What the gate does not cover:** it reads
+  committed history only, so a secret that is untracked or gitignored — the
+  `private.pem` at this repository's root, for one — is never read by it.
+  The gate is protection against *committing* a credential, not against
+  having one on disk. `osv-scanner` reports known-vulnerable dependencies
+  as an advisory annotation rather than a hard failure, so shipping an
+  urgent fix is never blocked by a transitive CVE with no available patch;
+  its run summary now distinguishes "scanned and found nothing" from
+  "reported nothing", so a scanner that dies before writing output no
+  longer reads as a clean bill of health.
 - **Supported-versions policy corrected.** `SECURITY.md` now states that
   the `0.3.x` line receives security fixes, matching the shipped
   `manifest.json` version, instead of the stale `0.2.x` row that named a
