@@ -76,6 +76,9 @@ const usedPlaceholders = computed((): { key: string; value: string; escaped: str
   if (!preview.value) return [];
   return preview.value.placeholders
     .filter((p) => p.used)
+    // For %R, %E and %B this flag is always false. That is the documented exception
+    // on PlaceholderInfo, not a statement that those paths reach the shell unquoted:
+    // the legend is built without writing the files, so it has no path to escape.
     .map((p) => ({ key: p.key, value: p.value, escaped: p.escaped, quoted: p.escaped !== p.value }));
 });
 

@@ -50,6 +50,20 @@ export interface TerminalExitEvent {
  * request; `escaped` is what the shell will actually receive. They differ
  * exactly when quoting was applied. A legend that shows only `value` beside a
  * quoted command trains the operator to misread the command they are approving.
+ *
+ * Exception — `%R`, `%E` and `%B` are exempt by construction. This legend is
+ * built by `buildPlaceholderInfo`, a pure function that writes no temp file, so
+ * at legend-build time no path exists to escape and `value` carries a
+ * description ("<raw request file>") rather than a path. For those three rows
+ * `escaped` mirrors the description and says nothing about the command — which
+ * really does quote the generated path, because `resolvePlaceholders` runs the
+ * temp path it created through `shellEscape` before interpolating it.
+ *
+ * The consequence for consumers: anything deriving a "was this quoted?" flag
+ * from `escaped !== value` must treat those three keys as **unknown**, not as
+ * unquoted. Reading the flag as "unquoted" is wrong on exactly the path where
+ * it matters — a TMPDIR whose name contains a space yields a generated path
+ * that genuinely needs the quoting the legend cannot show.
  */
 export interface PlaceholderInfo {
   key: string;
