@@ -82,6 +82,15 @@ const usedPlaceholders = computed((): { key: string; value: string; escaped: str
     .map((p) => ({ key: p.key, value: p.value, escaped: p.escaped, quoted: p.escaped !== p.value }));
 });
 
+// Follows the same condition open() uses to decide what goes in the textarea. With
+// several requests it holds the unresolved template, so "shell receives" would
+// describe a command that is not on screen — the escaped form is the first
+// request's resolution, and the wording matches the "Preview (1st request):" block
+// so the two say one thing rather than two.
+const escapedFormLabel = computed((): string =>
+  currentRequestIds.value.length > 1 ? "1st request receives" : "shell receives"
+);
+
 defineExpose({ open });
 </script>
 
@@ -137,12 +146,15 @@ defineExpose({ open });
           </td>
           <td class="ph-value">
             {{ ph.value }}
-            <!-- Only when quoting was applied: the command above contains this
-                 string, not the raw one, and the operator is approving that. -->
+            <!-- Only when quoting was applied. What the quoted form describes
+                 depends on the path, which is why the label is not a literal: with
+                 one request the textarea holds this very string and the operator is
+                 approving it; with several it holds the unresolved template and
+                 this is how the first of them resolves. -->
             <span
               v-if="ph.quoted"
               class="ph-escaped"
-            >shell receives {{ ph.escaped }}</span>
+            >{{ escapedFormLabel }} {{ ph.escaped }}</span>
           </td>
         </tr>
       </table>
