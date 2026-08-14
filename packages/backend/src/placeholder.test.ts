@@ -362,6 +362,37 @@ describe("buildPlaceholderInfo", () => {
     expect(cookieEntry.escaped).toBe("'session=abc'");
   });
 
+  // The remaining three escaped keys, and why they needed their own rows. The
+  // wiring walk below reaches %D, %G and %M only through the fixture defaults —
+  // example.com, UA and GET — which are all allowlist-clean, so shellEscape(v)
+  // returns v and both branches of that walk agree whichever constructor built
+  // the entry. Switching any of the three from buildEscapedEntry to
+  // buildVerbatimEntry therefore shipped a fully green run, and quotedCount
+  // stayed at 5, so the non-vacuity guard did not catch it either
+  // (01-REVIEW.md WR-07). %G is the User-Agent and %M is the request method:
+  // both are written by whoever sent the request, so on a proxied request they
+  // are the two values an attacker picks directly, and a User-Agent as ordinary
+  // as Mozilla/5.0 (X11) is quoted in the resolved command today. Each row
+  // carries a value that genuinely requires quoting, and asserts value as well
+  // as escaped so the raw original cannot drift into the escaped form — the
+  // failure probe P-D caught in 01-09. Both expected strings per row are
+  // literals, never shellEscape calls, for the same reason as the two rows above.
+  const escapedCases: [string, Partial<RequestData>, string, string][] = [
+    ["%D", { rootDomain: "a b.com" }, "a b.com", "'a b.com'"],
+    ["%G", { userAgent: "Mozilla/5.0 (X11)" }, "Mozilla/5.0 (X11)", "'Mozilla/5.0 (X11)'"],
+    ["%M", { method: "GET;id" }, "GET;id", "'GET;id'"],
+  ];
+
+  for (const [key, overrides, value, escaped] of escapedCases) {
+    it(`${key} carries both the raw value and the quoted form the shell receives`, () => {
+      const info = buildPlaceholderInfo(`t ${key}`, makeRequestData(overrides));
+      const entry = info.find((candidate) => candidate.key === key);
+      if (!entry) throw new Error(`no ${key} entry in the placeholder legend`);
+      expect(entry.value).toBe(value);
+      expect(entry.escaped).toBe(escaped);
+    });
+  }
+
   it("the three file entries carry their fixed descriptions", () => {
     const info = buildPlaceholderInfo("x", makeRequestData());
     expect(info.slice(-3)).toEqual([
