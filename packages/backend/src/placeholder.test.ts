@@ -92,13 +92,21 @@ describe("shellEscape", () => {
 });
 
 describe("resolvePlaceholders", () => {
-  // Invariant: every key in the replacements map (placeholder.ts:66-77) except the two
-  // documented exceptions %P and %S must have at least one row below whose value
-  // requires quoting. A key reached only through the fixture's allowlist-clean defaults
-  // resolves identically escaped or not, so dropping its shellEscape lands green —
+  // Invariant: every key in the `replacements` map that resolvePlaceholders builds,
+  // except the two documented exceptions %P and %S, must have at least one row below
+  // whose value requires quoting. A key reached only through the fixture's allowlist-clean
+  // defaults resolves identically escaped or not, so dropping its shellEscape lands green —
   // measured on %A, %C, %D and %M, which each survived a full run before the rows below
-  // existed. The one key held outside this table is %G, pinned by the exact preset-curl
-  // row at presets.test.ts:90-93.
+  // existed. The one key held outside this table is %G, pinned by the preset-curl row in
+  // presets.test.ts's "resolved command is exact" block.
+  //
+  // The preview side carries the same rule against a different constructor, and it is
+  // argued once rather than twice: describe("buildPlaceholderInfo") at the foot of this
+  // file owns the escaped-key invariant for buildEscapedEntry — which of its keys are held
+  // by a literal-expectation row, which ride on the wiring walk's fixture, and why that
+  // second half is load-bearing. Read it there. This block's subject is the resolved
+  // command only, and restating the legend's invariant here would give it a second place
+  // to go stale.
   //
   // Second invariant, from SAFE-01: each character removed from the allowlist needs both
   // a bare row in the shellEscape table above and a row here that carries it through a
@@ -110,15 +118,37 @@ describe("resolvePlaceholders", () => {
     ["t %U", { port: 8443 }, "t https://example.com:8443/a"],
     ["t %U %Q", { query: "a=1&b=2" }, "t 'https://example.com/a?a=1&b=2' 'a=1&b=2'"],
     ["t [%Q]", {}, "t ['']"],
-    // %P and %S are the two replacement-map entries not passed through shellEscape
-    // (placeholder.ts:69,73) — a deliberate exception, pinned here.
+    // %P and %S are the two replacement-map entries not passed through shellEscape: the
+    // map assigns them String(data.port) and buildFullUrl's scheme bare, where every
+    // other entry is wrapped in a shellEscape call. A deliberate exception, pinned here.
     ["t %P %S", { port: 8080, tls: false }, "t 8080 http"],
     ["t %Z %U", {}, "t %Z https://example.com/a"],
     ["t %u %h", {}, "t %u %h"],
     ["t %%U", {}, "t %https://example.com/a"],
-    // The single-pass guard at placeholder.ts:83: a resolved value that itself
-    // contains a placeholder token must not be substituted a second time.
+    // The single-pass guard — the one template.replace(PLACEHOLDER_RE, …) call in
+    // resolvePlaceholders: a resolved value that itself contains a placeholder token must
+    // not be substituted a second time. "Multi-pass placeholder replacement" is a named
+    // hard anti-pattern in CLAUDE.md, and these next two rows are what keep it out.
+    //
+    // They are a PAIR. Neither is redundant with the other, because a multi-pass rewrite
+    // walks the replacements map key by key and which row it breaks depends entirely on
+    // which way it walks:
+    //
+    //   %U is the FIRST key in that map, so a forward-order walk substitutes %U before it
+    //   ever reaches %H. By the time %H puts a literal %U into the command the %U pass is
+    //   already behind it, and the token survives by accident rather than by design — so
+    //   this row stays green under forward order and dies only under reverse.
+    //
+    //   %D is the LAST scalar key, the mirror image. A forward-order walk substitutes %H
+    //   first and then walks on to %D, expanding the token %H just produced and yielding
+    //   "t example.com.evil.com" — request-derived data changing the command beyond its
+    //   own value. This row dies under forward order and stays green under reverse.
+    //
+    // The %U row alone is not coverage: with only it present, a genuine forward-order
+    // sequential replacement shipped a fully green run (01-REVIEW.md WR-08). Delete
+    // either row and one direction of the anti-pattern silently becomes shippable again.
     ["t %H", { host: "%U.evil.com" }, "t %U.evil.com"],
+    ["t %H", { host: "%D.evil.com" }, "t %D.evil.com"],
     // Request-derived shell metacharacters change the command's values, never its shape.
     ["t %H", { host: "$(id)" }, "t '$(id)'"],
     // The same guarantee for the four request-derived keys the fixture reaches only
