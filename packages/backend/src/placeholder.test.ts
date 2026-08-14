@@ -32,7 +32,7 @@ describe("shellEscape", () => {
     ["*", "'*'"],
     [" ", "' '"],
     ["%U", "%U"],
-    // $ is off the allowlist at placeholder.ts:9, but every other $ case in this file
+    // $ is off the allowlist regex in shellEscape, but every other $ case in this file
     // also carries ( and ), which stay off the allowlist and keep the value quoted for
     // the wrong reason — so widening the allowlist by the single character $ passed a
     // full run. $HOME and $IFS are the bare shapes that die with it. SAFE-01 has since
@@ -60,7 +60,7 @@ describe("shellEscape", () => {
 
   // --- Allowlist: two gaps still pinned, two closed by SAFE-01 ---
 
-  // The allowlist at placeholder.ts:9 accepts a leading dash, so a request-derived
+  // The allowlist regex in shellEscape accepts a leading dash, so a request-derived
   // value reaches the tool as a flag rather than as an operand. Argument injection,
   // owned by Phase 7 / SAFE-02. Pinned, not fixed: the removal must land as a red
   // test rather than a silent diff.
@@ -267,18 +267,20 @@ describe("resolvePlaceholders file branch", () => {
   });
 
   // The three rows above cannot tell a working shellEscape from a missing one, and
-  // neither could any exact assertion against an ordinary temp path. mkdtempSync
-  // (placeholder.ts:49) builds its path out of letters, digits, /, ., _ and -, every one
-  // of which shellEscape leaves unquoted, so "escaped" and "not escaped at all" produce
-  // the same string. The rows above compound that by building their expected command
-  // with shellEscape on BOTH sides, so they hold under any mutation of it whatsoever.
+  // neither could any exact assertion against an ordinary temp path. The mkdtempSync
+  // call in resolvePlaceholders builds its path out of letters, digits, /, ., _ and -,
+  // every one of which shellEscape leaves unquoted, so "escaped" and "not escaped at
+  // all" produce the same string. The rows above compound that by building their
+  // expected command with shellEscape on BOTH sides, so they hold under any mutation
+  // of it whatsoever.
   //
   // The three rows below supply the missing distinction. os.tmpdir() reads its POSIX
   // environment override at call time, so pointing it at a directory whose name contains
   // a space forces a temp path that genuinely needs quoting, and the expected string is
   // then built from the raw returned path plus literal single quotes — never from the
-  // encoder under test. Drop the shellEscape from any one of placeholder.ts:87-89 and
-  // the matching row dies. Follow-up to 01-REVIEW.md WR-01.
+  // encoder under test. Drop the shellEscape from any one of the three file-key
+  // assignments to the replacements map in resolvePlaceholders and the matching row
+  // dies. Follow-up to 01-REVIEW.md WR-01.
   //
   // One row per key rather than one covering all three: %R, %E and %B are escaped by
   // three separate calls, so a mutation of one is invisible to a row covering another.
@@ -365,8 +367,8 @@ describe("resolvePlaceholders file branch", () => {
 });
 
 describe("buildPlaceholderInfo", () => {
-  // Invariant for this block: every key built with buildEscapedEntry
-  // (placeholder.ts:124-138 — %U, %H, %A, %Q, %M, %C, %G and %D, eight of the
+  // Invariant for this block: every key buildPlaceholderInfo builds with
+  // buildEscapedEntry (%U, %H, %A, %Q, %M, %C, %G and %D, eight of the
   // thirteen) needs one row whose value requires quoting. A key reached only
   // through allowlist-clean values resolves identically under either
   // constructor, so dropping its escaping lands green — which is how %D, %G and

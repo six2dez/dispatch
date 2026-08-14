@@ -71,7 +71,7 @@ describe("DEFAULT_PRESETS sweep", () => {
       }
 
       // Adding %W or %O to a template without adding it to PLACEHOLDER_RE
-      // (placeholder.ts:25) leaves the token in the command handed to the shell.
+      // leaves the token in the command handed to the shell.
       // The literal WORDLIST and $WPSCAN_API tokens are unaffected — neither is
       // %-prefixed.
       expect(command).not.toMatch(/%[A-Z]/);
