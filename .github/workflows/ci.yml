@@ -199,6 +199,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: OSV-Scanner
+        # The id exists so the reporting step can read this step's outcome. Without it,
+        # continue-on-error below leaves no way to distinguish a clean scan from a scanner
+        # that opened its output writer and then died, and the summary called the second one
+        # a clean bill of health.
+        id: osv
         # Step level, never job level: continue-on-error is unsupported on a job that calls a
         # reusable workflow via `uses:`, so the reusable-workflow variant would silently lose
         # D-09's advisory intent and turn this into a blocking gate.
@@ -229,9 +234,22 @@ jobs:
       # silently is how WR-03 happened, so if this cannot report, the job should go red.
       - name: Publish findings to the run summary
         if: always()
+        env:
+          # osv-scanner exits 0 for "no vulnerabilities", 1 for "vulnerabilities found" and
+          # anything higher for an error. continue-on-error on the scanner step hides all
+          # three, so the outcome is carried through explicitly: an existing but empty results
+          # file is otherwise indistinguishable from a scanner that opened its writer and then
+          # died, and this step used to report that case as clean.
+          #
+          # outcome, not conclusion: conclusion is what continue-on-error rewrote to success,
+          # which is the value that cannot tell the two cases apart. Note a findings run also
+          # reports failure here, which is why only the empty-file branch consults it.
+          OSV_OUTCOME: ${{ steps.osv.outcome }}
         run: |
           if [[ ! -f osv-results.md ]]; then
             echo "::warning::OSV-Scanner wrote no results file — this run reported nothing."
+          elif [[ ! -s osv-results.md && "$OSV_OUTCOME" != "success" ]]; then
+            echo "::warning::OSV-Scanner wrote an empty results file and exited with outcome ${OSV_OUTCOME:-unset} — this run reported nothing."
           fi
           {
             echo "## Dependency CVEs (advisory)"
@@ -242,13 +260,28 @@ jobs:
               # thing D-09 forbids.
               head -c 512000 osv-results.md
               echo
+              # The bound cuts mid-row and says nothing, so a reader of a large summary sees a
+              # table that simply stops with no way to know findings were dropped.
+              if [[ $(wc -c < osv-results.md) -gt 512000 ]]; then
+                echo "_… truncated at 512 KB; see the scanner step log for the full table._"
+                echo
+              fi
               echo "_Advisory only. This job does not fail on a finding (D-09): a transitive"
               echo "CVE often has no available patch, and blocking would stop an urgent fix._"
-            elif [[ -f osv-results.md ]]; then
+            elif [[ -f osv-results.md && "$OSV_OUTCOME" == "success" ]]; then
               echo "No known vulnerabilities in pnpm-lock.yaml."
+            elif [[ ! -f osv-results.md ]]; then
+              echo "> [!WARNING]"
+              echo "> OSV-Scanner wrote no results file (outcome: ${OSV_OUTCOME:-unset}), so it"
+              echo "> failed before reporting."
+              echo "> **This run reported nothing** — do not read the green check as a clean"
+              echo "> bill of health. Open the scanner step's log to see why it exited."
             else
               echo "> [!WARNING]"
-              echo "> OSV-Scanner wrote no results file, so it failed before reporting."
+              echo "> OSV-Scanner wrote an empty results file but did not exit cleanly"
+              echo "> (outcome: ${OSV_OUTCOME:-unset}). The output writer is opened before the"
+              echo "> scan begins, so an empty file is what a scanner that died mid-scan leaves"
+              echo "> behind — it cannot be read as a clean scan."
               echo "> **This run reported nothing** — do not read the green check as a clean"
               echo "> bill of health. Open the scanner step's log to see why it exited."
             fi
