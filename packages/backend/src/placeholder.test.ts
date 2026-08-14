@@ -302,6 +302,31 @@ describe("resolvePlaceholders file branch", () => {
 });
 
 describe("buildPlaceholderInfo", () => {
+  // Invariant for this block: every key built with buildEscapedEntry
+  // (placeholder.ts:124-138 — %U, %H, %A, %Q, %M, %C, %G and %D, eight of the
+  // thirteen) needs one row whose value requires quoting. A key reached only
+  // through allowlist-clean values resolves identically under either
+  // constructor, so dropping its escaping lands green — which is how %D, %G and
+  // %M each survived a full run before the table below existed (01-REVIEW.md
+  // WR-07). Two mechanisms cover the eight, and they are not equally strong:
+  //
+  //   By a literal-expectation row — %H and %C, plus %D, %G and %M in the table
+  //   below. These pin the escaped value against a written-out string, so they
+  //   fail under an identity shellEscape and under a swapped constructor alike.
+  //
+  //   By the wiring walk's fixture alone — %U, %A and %Q, which have no row of
+  //   their own. makeRequestData({ host: "$(id)", path: "/a b" }) is the only
+  //   thing making their values require quoting: the two overrides carry %U and
+  //   %A, while %Q rides on the fixture's empty query, since shellEscape("")
+  //   is '' and so differs from its input.
+  //
+  // That second half is load-bearing, and it is retired by editing a fixture
+  // rather than by deleting a test. Soften the walk's overrides — a host with no
+  // metacharacter, a path with no space — or give the fixture a non-empty query,
+  // and those three keys lose their only coverage while every assertion here
+  // still passes. expect(quotedCount).toBe(5) at the end of the walk is the
+  // guard that makes such an edit arrive as a red test instead of as silence.
+  //
   // The count is folded into this description rather than asserted separately
   // (01-REVIEW.md IN-02): toEqual on the full key array pins length and order at
   // once, so a toHaveLength(13) beside it could never fail and 13 was a bare
@@ -336,7 +361,7 @@ describe("buildPlaceholderInfo", () => {
   // `escaped` is the other half of that same contract: it is what the shell will
   // actually receive, so the legend can answer both questions without either
   // answer displacing the other. Its expected string below is deliberately a
-  // literal. This is one of the two rows that tell a working shellEscape from an
+  // literal. This is one of the five rows that tell a working shellEscape from an
   // identity one, and building the expectation by calling shellEscape would
   // forfeit exactly the guarantee the row exists to give.
   it("values are the unescaped originals and escaped carries the quoting", () => {
@@ -409,15 +434,24 @@ describe("buildPlaceholderInfo", () => {
   // the mistake this comment exists to prevent.
   //
   // What it does pin is the builder's wiring — that every scalar key routes
-  // through the encoder at all, and that %P and %S are the only scalar keys
-  // exempt from it. No literal row would catch a key that was simply never wired,
-  // which is why this walk is worth keeping despite what it cannot prove.
+  // through the encoder at all. No literal row would catch a key that was simply
+  // never wired, which is why this walk is worth keeping despite what it cannot
+  // prove.
   //
-  // The escaped *values* are pinned by the two rows above, whose expected strings
+  // What it does NOT pin, despite the verbatimKeys list reading as if it did, is
+  // that %P and %S are the only scalar keys exempt. That exemption is asserted
+  // here but cannot fail: a port and a scheme are always allowlist-clean, so
+  // escaped and verbatim produce the same string, and switching either to
+  // buildEscapedEntry leaves this walk — and the whole suite — green
+  // (01-REVIEW.md IN-10). The list says which entries the branch above expects to
+  // match, not that the exemption is the right one.
+  //
+  // The escaped *values* are pinned by the five rows above, whose expected strings
   // are literals and never call shellEscape: "values are the unescaped originals
-  // and escaped carries the quoting" (%H) and "surfaces the SAFE-01 quoting of an
-  // ordinary Cookie value on %C" (%C). Under an identity shellEscape this walk
-  // stays green and those two go red. That is the division of labour.
+  // and escaped carries the quoting" (%H), "surfaces the SAFE-01 quoting of an
+  // ordinary Cookie value on %C" (%C), and the %D / %G / %M table. Under an
+  // identity shellEscape this walk stays green and those five go red. That is the
+  // division of labour.
   it("routes every scalar key through shellEscape except %P and %S", () => {
     // %P and %S are bare in the replacement map; %R/%E/%B are descriptions rather
     // than request values and no command ever carries them.
