@@ -104,9 +104,23 @@ jobs:
           # so omitting it leaves the scanner itself unpinned. No leading "v": the container
           # tag 3.94.3 returns HTTP 200 from ghcr while v3.94.3 returns 404.
           version: 3.94.3
-          # The CLI default is verified,unverified,unknown, and --fail on that default blocks
-          # the build on unverified detections — usually fixtures, docs examples or public keys.
-          extra_args: --results=verified,unknown
+          # The unverified class is kept deliberately. TruffleHog sorts every detection into
+          # verified (live verification succeeded), unknown (verification was attempted and
+          # errored) and unverified (verification ran and returned negative, or the detector
+          # has no verifier), and --fail fires only on what survives this filter.
+          #
+          # This repository's one named secret is the release signing key, and a self-signed
+          # PEM is registered nowhere, so the privatekey detector returns a clean negative and
+          # the finding lands in unverified. The narrower filter that used to sit here dropped
+          # that class, which meant committing private.pem passed every secret gate in this
+          # repository — measured, not reasoned: against a throwaway repo whose history carries
+          # a generated key, the old filter exited 0 and this one exits 183.
+          #
+          # Noise is handled by detector name with --exclude-detectors, never by discarding a
+          # class. None is excluded today because none was found: scanning this repository's
+          # full committed history with this filter emitted zero detections across 715 chunks
+          # and 539986 bytes, so keeping the class costs nothing to triage.
+          extra_args: --results=verified,unverified,unknown
 
   # push coverage: the other half of the split above, and the reason the guard on secret-scan
   # is a scoping decision rather than a hole. Pushing straight to main is this repository's
@@ -145,13 +159,17 @@ jobs:
           # Here the history is the scan range itself — see the sibling job's note above.
           fetch-depth: 0
 
+      # The result filter keeps the unverified class on purpose: a self-signed PEM verifies
+      # negative and would otherwise be dropped without ever reaching --fail. Full reasoning
+      # sits above secret-scan's extra_args. Keep the two in step — see the byte-identity note
+      # above.
       - name: TruffleHog
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/repo" -w /repo \
             ghcr.io/trufflesecurity/trufflehog:3.94.3 \
             git file:///repo \
-            --results=verified,unknown \
+            --results=verified,unverified,unknown \
             --fail --no-update --github-actions
 
   # D-09: dependency CVEs are reported but never fail the job. A transitive CVE frequently has

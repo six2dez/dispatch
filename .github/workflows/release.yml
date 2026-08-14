@@ -52,13 +52,19 @@ jobs:
       # Deliberately not enabled pre-emptively: it widens what git will read, it has not been
       # observed to be needed, and the failure it guards against is loud and fires before
       # signing, never silent.
+      #
+      # The result filter keeps the unverified class on purpose: this repository's release
+      # signing key is self-signed, so it verifies negative and the narrower filter that used
+      # to sit here dropped it — the one artifact this gate exists to catch, on the one path
+      # that signs something immutable. Full reasoning is above ci.yml's secret-scan step, and
+      # this invocation is byte-identical to secret-scan-push's on purpose.
       - name: Secret scan
         run: |
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/repo" -w /repo \
             ghcr.io/trufflesecurity/trufflehog:3.94.3 \
             git file:///repo \
-            --results=verified,unknown \
+            --results=verified,unverified,unknown \
             --fail --no-update --github-actions
 
       - name: Resolve version
