@@ -214,7 +214,16 @@ describe("resolvePlaceholders file branch", () => {
   });
 
   it("%R %E %B together create three files in one dispatch- directory", () => {
-    const { command, tempFiles } = resolvePlaceholders("tool %R %E %B", makeRequestData());
+    // The fixture's bodyBytes default is deliberately empty — it models the GET on its
+    // own request line — and an empty file cannot tell "wrote the body" from "wrote
+    // nothing". So the payload is overridden here rather than in test-fixtures.ts, whose
+    // default the %R rows and the preset sweep are all measured against. Credential-shaped
+    // on purpose: this is what a login POST leaves in body.txt, and it is why the mode
+    // below is not a formality.
+    const data = makeRequestData({
+      bodyBytes: new TextEncoder().encode("u=admin&p=hunter2"),
+    });
+    const { command, tempFiles } = resolvePlaceholders("tool %R %E %B", data);
     for (const tempFile of tempFiles) {
       createdDirs.push(dirname(tempFile));
     }
@@ -228,6 +237,30 @@ describe("resolvePlaceholders file branch", () => {
       "headers.txt",
       "body.txt",
     ]);
+
+    // %B is pinned here or nowhere. No shipped preset uses it (grep -c "%B" presets.ts is
+    // 0), so the preset sweep never reaches it, and the three TMPDIR-space rows below
+    // assert quoting only — leaving this the one file placeholder with neither a content
+    // nor a mode assertion. Both gaps are security-relevant: writing rawRequestBytes here
+    // would put the Cookie and Authorization headers into a file the operator believes
+    // holds only the body, and then hand its path to an external CLI tool. The 0o600 is a
+    // shipped 0.3.0 § Security fix whose CHANGELOG entry names %R, %E and %B together;
+    // until now the suite protected two of the three files that sentence lists, and the
+    // unprotected one was the field most likely to carry a POST credential.
+    //
+    // Two content assertions, because one cannot do the whole job — the same reasoning as
+    // the %R rows in presets.test.ts, where probe P-F proved it rather than claimed it.
+    // The byte comparison is self-referential: both sides trace back to data.bodyBytes, so
+    // emptying that field moves both and the row stays green. What it does pin is the
+    // wiring, that body.txt receives THIS field and not rawRequestBytes or headers. The
+    // decode against data.rawRequest — a DIFFERENT fixture field — is what makes the row
+    // non-vacuous, turning "%B wrote the whole raw request instead of the body" into a
+    // contradiction the row can see rather than a silent disclosure.
+    const bodyFile = tempFiles[2]!;
+    expect(statSync(bodyFile).mode & 0o777).toBe(0o600);
+    expect(new Uint8Array(readFileSync(bodyFile))).toEqual(data.bodyBytes);
+    expect(readFileSync(bodyFile, "utf8")).not.toBe(data.rawRequest);
+
     expect(command).toBe(
       `tool ${shellEscape(tempFiles[0]!)} ${shellEscape(tempFiles[1]!)} ${shellEscape(tempFiles[2]!)}`
     );
