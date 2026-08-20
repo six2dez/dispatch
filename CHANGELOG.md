@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-08-20)
 
 Test suite, CI gating, and one deliberate change to command escaping. Most
 of this entry is internal — Dispatch gains an automated test suite and the
@@ -80,9 +80,12 @@ keywords added so two existing functions are reachable from a test,
   "reported nothing", so a scanner that dies before writing output no
   longer reads as a clean bill of health.
 - **Supported-versions policy corrected.** `SECURITY.md` now states that
-  the `0.3.x` line receives security fixes, matching the shipped
+  the `0.4.x` line receives security fixes, matching the shipped
   `manifest.json` version, instead of the stale `0.2.x` row that named a
-  minor line two releases behind.
+  minor line two releases behind. The row tracks the manifest by rule, not
+  by hand: it is asserted equal to
+  `jq -r .version manifest.json | cut -d. -f1,2`, so a release that bumps
+  the minor line and forgets this file fails its own check.
 
 ## 0.3.1 (2026-08-12)
 
