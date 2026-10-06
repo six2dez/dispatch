@@ -164,10 +164,22 @@ defineExpose({ openPicker, dispatchTool });
 
 .dispatch-panels {
   flex: 1;
+  /* Without this the automatic minimum size of a column flex item is its
+     content height, so a long tool list pushes the panel past the tab strip
+     and the overflow below is clipped instead of scrolled. */
+  min-height: 0;
   overflow: hidden;
 }
 
-.dispatch-panel {
+/* PrimeVue renders each TabPanel root inside TabPanels' default slot, so Vue
+   never propagates this component's scope id onto it and a plain
+   `.dispatch-panel` rule silently matches nothing. The panels then sized to
+   their content, overflowed the hidden `.dispatch-panels` above, and had no
+   scrollbar — so anything below the fold (a newly saved tool lands last, at
+   sort order 999) was unreachable. The :deep() is anchored on
+   `.dispatch-panels`, which does carry the scope id; postcss-prefixwrap still
+   keeps the whole rule under .plugin--dispatch. */
+.dispatch-panels :deep(.dispatch-panel) {
   height: 100%;
   overflow: auto;
   padding: 12px;

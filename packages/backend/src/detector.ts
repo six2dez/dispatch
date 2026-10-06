@@ -2,66 +2,86 @@ import { spawn } from "child_process";
 import { platform } from "os";
 import type { ToolConfig, ToolDetectionResult, ToolDetectionEntry } from "./types";
 import { shellEscape } from "./placeholder";
+import { chunkToString, runInUserShell } from "./shell";
 
-const IS_MAC = platform() === "darwin";
 const IS_WINDOWS = platform() === "win32";
 const DETECTION_CONCURRENCY = 5;
+const DETECTION_TIMEOUT_MS = 3000;
 const SHELL_HELPERS = new Set(["sudo", "env", "nohup", "nice", "time", "echo", "printf"]);
 const PLACEHOLDER_TOKEN = /^%[A-Z]$/;
 const ENV_ASSIGNMENT_TOKEN = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
 const ENV_REFERENCE_TOKEN = /^\$(\{?[A-Za-z_][A-Za-z0-9_]*\}?)$/;
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Detection failures used to be swallowed by every layer — each tool quietly
+ * reported "not installed" with nothing in Caido's log to explain why. The
+ * global console is the SDK's console (see shell.ts), so these lines land in
+ * the plugin log; never throws.
+ */
+function logDetection(message: string): void {
+  try {
+    if (typeof console !== "undefined" && typeof console.error === "function") {
+      console.error(`[Dispatch] detect: ${message}`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function normalizeBinaryToken(token: string): string {
   return token.trim().replace(/^['"]+|['"]+$/g, "");
 }
 
-export function detectTool(
+export async function detectTool(
   binary: string
 ): Promise<{ installed: boolean; path: string | null }> {
+  const normalizedBinary = normalizeBinaryToken(binary);
+  if (normalizedBinary.length === 0) return { installed: false, path: null };
+
+  const escaped = shellEscape(normalizedBinary);
+
+  // Probe with the same shell and interactive PATH the executor uses, so a tool
+  // shown as "installed" is guaranteed to be runnable. Using the executor's
+  // environment matters for anything installed under ~/go/bin, ~/.cargo/bin, or
+  // a version manager — none of which exist in a bare non-interactive login
+  // shell.
+  const result = IS_WINDOWS
+    ? await detectWindows(normalizedBinary)
+    : await runInUserShell(`which -- ${escaped}`, { timeoutMs: DETECTION_TIMEOUT_MS });
+
+  const path = result.stdout.trim().split("\n")[0] ?? "";
+  // 127 means the shell never ran `which` (spawn failed) — worth a log line,
+  // because a silent 127 is indistinguishable from "binary missing" and is
+  // exactly how an environment regression hides. A genuinely missing binary
+  // exits 1 from `which`, not 127, so healthy misses stay quiet.
+  if (result.code === 127 && result.stderr.trim().length > 0) {
+    logDetection(`${normalizedBinary}: ${result.stderr.trim()}`);
+  }
+  return { installed: result.code === 0 && path.length > 0, path: path || null };
+}
+
+function detectWindows(
+  binary: string
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    let resolved = false;
-    const done = (result: { installed: boolean; path: string | null }) => {
-      if (resolved) return;
-      resolved = true;
-      resolve(result);
-    };
-
+    let child;
     try {
-      let output = "";
-      const normalizedBinary = normalizeBinaryToken(binary);
-      if (normalizedBinary.length === 0) {
-        done({ installed: false, path: null });
-        return;
-      }
-      const escaped = shellEscape(normalizedBinary);
-      const child = IS_WINDOWS
-        ? spawn("where", [normalizedBinary])
-        : IS_MAC
-          ? spawn("/bin/zsh", ["-lc", `which -- ${escaped}`])
-          : spawn("/bin/bash", ["-lc", `which -- ${escaped}`]);
-
-      child.stdout.on("data", (data) => {
-        output += data.toString();
-      });
-
-      child.on("close", (code: number | null) => {
-        done({
-          installed: code === 0,
-          path: code === 0 ? output.trim().split("\n")[0]! : null,
-        });
-      });
-
-      child.on("error", () => {
-        done({ installed: false, path: null });
-      });
-
-      setTimeout(() => {
-        try { child.kill(); } catch { /* already dead */ }
-        done({ installed: false, path: null });
-      }, 3000);
+      child = spawn("where", [binary], { stdio: ["ignore", "pipe", "pipe"] });
     } catch {
-      done({ installed: false, path: null });
+      resolve({ code: 127, stdout: "", stderr: "" });
+      return;
     }
+
+    let stdout = "";
+    child.stdout?.on("data", (chunk) => { stdout += chunkToString(chunk); });
+    child.on("error", () => resolve({ code: 127, stdout, stderr: "" }));
+    child.on("close", (code: number | null) =>
+      resolve({ code: code ?? 127, stdout, stderr: "" })
+    );
   });
 }
 
@@ -118,7 +138,8 @@ async function detectBinaries(binaryList: string[]): Promise<ToolDetectionResult
         try {
           const detection = await detectTool(binary);
           return { binary, ...detection };
-        } catch {
+        } catch (error) {
+          logDetection(`${binary} threw: ${describeError(error)}`);
           return { binary, installed: false, path: null };
         }
       })

@@ -1,5 +1,6 @@
-import { writeFileSync, mkdtempSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
+import { randomBytes } from "crypto";
 import { join } from "path";
 import type { PlaceholderInfo, RequestData, ResolvedCommand } from "./types";
 
@@ -33,6 +34,43 @@ function buildFullUrl(data: RequestData): { scheme: string; fullUrl: string } {
 // Single-pass placeholder regex — prevents re-expansion of resolved values
 const PLACEHOLDER_RE = /%[UHPAQMSCREBGD]/g;
 
+// The temp directory name is handed to an external CLI verbatim, so its suffix cannot be
+// delegated to mkdtempSync, whose alphabet is whatever the Node build's libuv and the libc
+// under it happen to use. Dispatch shipped mkdtempSync's suffix into sqlmap's argv and
+// sqlmap 1.10.9 truncated the path at the first comma it found there: a real directory
+// named /tmp/dispatch-,pL9Tg9 arrived as `specified HTTP request file '/tmp/dispatch-'
+// does not exist`. Quoting cannot rescue that case — sqlmap splits the argv element it
+// was given, and by then the shell has long since handed it over as one argument — so the
+// only available fix is to stop generating the character. A comma is not the only
+// character a tool in this ecosystem may read as structure, and the operator does not
+// control which tool consumes a given dispatch, so the alphabet is narrowed to hex
+// instead of to an allow-list of "characters known to be safe today": hex is a strict
+// subset of [A-Za-z0-9], uniform without modulo bias, and legible in the source, which
+// is the property that has to survive the next Node upgrade.
+const TEMP_DIR_ATTEMPTS = 10;
+
+function createTempDir(): string {
+  const root = tmpdir();
+  for (let attempt = 0; attempt < TEMP_DIR_ATTEMPTS; attempt++) {
+    const dir = join(root, `dispatch-${randomBytes(6).toString("hex")}`);
+    try {
+      // 0o700 — what mkdtempSync produced, and the same guarantee with one more syscall.
+      // The directory holds a raw request, its headers and its body, and mkdirSync is
+      // what makes the name ours: it raises EEXIST rather than adopting a directory that
+      // already exists, so the retry below cannot be walked into an existing path or a
+      // symlink someone else planted. A umask can only clear bits here, never add them,
+      // so the mode is at most as permissive as 0o700 asks for.
+      mkdirSync(dir, { mode: 0o700 });
+      return dir;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "EEXIST") throw err;
+    }
+  }
+  throw new Error(
+    `Dispatch could not create a dispatch- temp directory under ${root} after ${TEMP_DIR_ATTEMPTS} attempts`
+  );
+}
+
 export function resolvePlaceholders(
   template: string,
   data: RequestData
@@ -46,7 +84,7 @@ export function resolvePlaceholders(
   let bFile: string | undefined;
 
   if (template.includes("%R") || template.includes("%E") || template.includes("%B")) {
-    const tmpDir = mkdtempSync(join(tmpdir(), "dispatch-"));
+    const tmpDir = createTempDir();
 
     // 0o600 — request data can contain cookies, bearer tokens, and raw bodies.
     // Restrict to the current user so other local accounts can't read.

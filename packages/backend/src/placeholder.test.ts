@@ -364,6 +364,66 @@ describe("resolvePlaceholders file branch", () => {
     expect(file.includes(" ")).toBe(true);
     expect(resolved.command).toBe(`tool -b '${file}'`);
   });
+
+  // The dispatch- suffix is generated here rather than left to mkdtempSync, and this block
+  // is the only reason that is visible. sqlmap 1.10.9 parses its own argv and cuts a -r
+  // path at the first comma inside it: given /tmp/dispatch-,pL9Tg9/request.raw it reported
+  // `specified HTTP request file '/tmp/dispatch-' does not exist` and exited. Verified
+  // against the local binary at the same version, across a comma, a plus, an at, a percent,
+  // an equals and a space in the same position — the comma alone truncated, so this is not
+  // a shell-splitting bug and shellEscape cannot be the fix: sqlmap splits the one argv
+  // element the shell already handed it. Hence a charset guarantee on the generated name,
+  // and hence the two assertions below rather than one.
+  //
+  // One generation would prove nothing, because the character that broke it arrived at
+  // random. 64 directories at 12 hex characters each is 768 draws: were a comma a member
+  // of the alphabet at the 1-in-64 rate the old suffix showed, P(no comma in 768 draws) is
+  // about 6e-6, so a regression fails this row rather than passing it by luck. The regex
+  // pins hex specifically instead of [A-Za-z0-9] — a strictly weaker charset, but a name
+  // drawn from any alphabet at all would satisfy it, which would leave the guarantee
+  // resting on Node's implementation rather than on this file.
+  it("the generated dispatch- directory name is hex, so no tool can read a comma in it", () => {
+    const names: string[] = [];
+    const commands: string[] = [];
+
+    for (let i = 0; i < 64; i++) {
+      const resolved = resolvePlaceholders("tool -r %R", makeRequestData());
+      // Registered before any assertion, so a failure at draw 3 still cleans up.
+      for (const tempFile of resolved.tempFiles) {
+        createdDirs.push(dirname(tempFile));
+      }
+      names.push(basename(dirname(resolved.tempFiles[0]!)));
+      commands.push(resolved.command);
+    }
+
+    for (const name of names) {
+      expect(name).toMatch(/^dispatch-[0-9a-f]{12}$/);
+    }
+    // The consumer-facing half: what sqlmap is handed is the whole path, so the row that
+    // would have caught the report is the one that has no comma anywhere in it. The
+    // fixture's host, path and query are comma-free, so a comma here can only have come
+    // from the directory name.
+    for (const command of commands) {
+      expect(command).not.toContain(",");
+    }
+  });
+
+  // mkdirSync replaced mkdtempSync, and mkdtempSync was the thing that created the
+  // directory 0o700. The files inside are asserted 0o600 by the three rows above; this
+  // covers the directory they sit in, which is the walk-in path to all three. The
+  // assertion is `& 0o077 === 0` rather than `=== 0o700` on purpose: a umask can only
+  // clear bits from the mode it is given, so "no group or other access" holds under every
+  // umask worth shipping while an equality check would fail on a box running 0o377.
+  it("the dispatch- directory itself is not readable by group or other", () => {
+    const resolved = resolvePlaceholders("tool -r %R", makeRequestData());
+    for (const tempFile of resolved.tempFiles) {
+      createdDirs.push(dirname(tempFile));
+    }
+
+    const dir = dirname(resolved.tempFiles[0]!);
+    expect(statSync(dir).isDirectory()).toBe(true);
+    expect(statSync(dir).mode & 0o077).toBe(0);
+  });
 });
 
 describe("buildPlaceholderInfo", () => {

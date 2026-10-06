@@ -1,19 +1,18 @@
-import { spawn, ChildProcess } from "child_process";
-import { rmSync, readdirSync, statSync } from "fs";
-import { dirname, join } from "path";
-import { tmpdir, platform } from "os";
+import { spawn } from "child_process";
+import type { ChildProcess } from "child_process";
+import { rmSync } from "fs";
+import { dirname } from "path";
+import { platform } from "os";
 import type { SDK } from "caido:plugin";
 import type { API, Events } from "./index";
 import { insertHistoryEntry, updateHistoryEntry } from "./db";
+import { chunkToString, spawnInUserShell } from "./shell";
 
 type PluginSDK = SDK<API, Events>;
 
-const IS_MAC = platform() === "darwin";
 const USE_PROCESS_GROUPS = platform() !== "win32";
 const MAX_STORED_OUTPUT = 512 * 1024; // 512KB per stream
 const MAX_CONCURRENT = 10;
-const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-const MAX_TEMP_AGE_MS = 10 * 60 * 1000;
 
 let sdkRef: PluginSDK | undefined;
 
@@ -71,26 +70,6 @@ export function releaseSlot(runId: string): void {
   reservedSlots.delete(runId);
 }
 
-// Spawn using user's login shell to inherit full PATH.
-// `stdio` is forced explicitly so the Node runtime embedded in Caido creates
-// pipes for stdout/stderr even when `detached: true` — without this, the
-// `on("data")` events never fired on some hosts and runs looked stuck at
-// "Running…" with empty output despite exiting cleanly.
-function spawnWithLoginShell(command: string): ChildProcess {
-  const opts = {
-    detached: USE_PROCESS_GROUPS,
-    stdio: ["ignore", "pipe", "pipe"] as ("ignore" | "pipe")[],
-  };
-  try {
-    if (IS_MAC) {
-      return spawn("/bin/zsh", ["-lc", command], opts);
-    }
-    return spawn("/bin/bash", ["-lc", command], opts);
-  } catch {
-    return spawn("sh", ["-c", command], opts);
-  }
-}
-
 // Kill entire process tree — not just the shell
 function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
   const pid = child.pid;
@@ -100,11 +79,27 @@ function killProcessTree(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): vo
   }
 
   if (USE_PROCESS_GROUPS) {
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch {
-      // Fall through to direct child termination if the process group no longer exists.
+    // Node: signal the whole group directly. Caido's runtime has no `process`
+    // global (shell.ts module doc), so without this guard line 84 threw
+    // ReferenceError and cancelled runs left the tool itself running — the
+    // fallback asks a spawned shell's kill builtin to signal the group.
+    if (typeof process !== "undefined" && typeof process.kill === "function") {
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {
+        // Fall through: the process group may no longer exist.
+      }
+    } else {
+      try {
+        const killer = spawn("/bin/sh", ["-c", `kill -s ${signal} -${pid} 2>/dev/null || true`], {
+          stdio: "ignore",
+        });
+        killer.on("error", () => { /* no kill(1) — nothing more we can do */ });
+        return;
+      } catch {
+        // Fall through to direct child termination.
+      }
     }
   }
 
@@ -133,12 +128,24 @@ function spawnAndTrack(
   timeoutMs: number | null,
   onClose?: () => void
 ): void {
-  // Consume the reservation (if any). If the caller didn't reserve we fall
-  // back to a capacity check as defense-in-depth — should not happen in
-  // normal flow but keeps the limit honest if a future caller forgets to
-  // reserve.
-  const hadReservation = reservedSlots.delete(runId);
-  if (!hadReservation && activeProcesses.size >= MAX_CONCURRENT) {
+  void trackSpawn(sdk, runId, resolvedCommand, tempFiles, toolName, requestId, startedAt, timeoutMs, onClose);
+}
+
+async function trackSpawn(
+  sdk: PluginSDK,
+  runId: string,
+  resolvedCommand: string,
+  tempFiles: string[],
+  toolName: string,
+  requestId: string | null,
+  startedAt: string,
+  timeoutMs: number | null,
+  onClose?: () => void
+): Promise<void> {
+  // Defense-in-depth capacity check. `reservedSlots` is intentionally left
+  // holding this run across the await below, so a concurrent dispatch cannot
+  // start while this one is still being spawned.
+  if (!reservedSlots.has(runId) && activeProcesses.size >= MAX_CONCURRENT) {
     logError(`Max concurrent processes (${MAX_CONCURRENT}) reached, rejecting ${runId}`);
     cleanupTempFiles(tempFiles);
     updateHistoryEntry(runId, {
@@ -151,6 +158,30 @@ function spawnAndTrack(
     return;
   }
 
+  let child: ChildProcess;
+  try {
+    child = await spawnInUserShell(resolvedCommand, {
+      detached: USE_PROCESS_GROUPS,
+    });
+  } catch (err) {
+    // Never announce a start we could not deliver, so the UI cannot be left
+    // showing a run that will never produce output or an exit event.
+    logError(`Failed to spawn ${runId}: ${err}`);
+    reservedSlots.delete(runId);
+    cleanupTempFiles(tempFiles);
+    updateHistoryEntry(runId, {
+      status: "error",
+      stderr: `Failed to start: ${err instanceof Error ? err.message : String(err)}`,
+      exitCode: -1,
+      finishedAt: new Date().toISOString(),
+    }).catch((e) => logError(`updateHistoryEntry failed: ${e}`));
+    onClose?.();
+    return;
+  }
+
+  // Process is live: swap the reservation for a tracked process.
+  reservedSlots.delete(runId);
+
   safeSend(sdk, "terminal:start", {
     runId,
     toolName,
@@ -159,7 +190,6 @@ function spawnAndTrack(
     startedAt,
   });
 
-  const child = spawnWithLoginShell(resolvedCommand);
   activeProcesses.set(runId, child);
 
   let stdoutBuf = "";
@@ -223,13 +253,13 @@ function spawnAndTrack(
   }
 
   child.stdout?.on("data", (data) => {
-    const chunk = data.toString();
+    const chunk = chunkToString(data);
     stdoutBuf = appendOutputChunk(stdoutBuf, chunk);
     safeSend(sdk, "terminal:output", { runId, data: chunk, stream: "stdout" as const });
   });
 
   child.stderr?.on("data", (data) => {
-    const chunk = data.toString();
+    const chunk = chunkToString(data);
     stderrBuf = appendOutputChunk(stderrBuf, chunk);
     safeSend(sdk, "terminal:output", { runId, data: chunk, stream: "stderr" as const });
   });
@@ -345,36 +375,4 @@ function cleanupTempFiles(tempFiles: string[]): void {
       // Ignore cleanup errors
     }
   }
-}
-
-// Periodic cleanup of stale dispatch- temp directories
-function cleanupStaleTempDirs(): void {
-  try {
-    const tmp = tmpdir();
-    const entries = readdirSync(tmp);
-    const now = Date.now();
-
-    for (const entry of entries) {
-      if (!entry.startsWith("dispatch-")) continue;
-      const fullPath = join(tmp, entry);
-      try {
-        const stat = statSync(fullPath);
-        if (stat.isDirectory() && now - stat.mtimeMs > MAX_TEMP_AGE_MS) {
-          rmSync(fullPath, { recursive: true });
-        }
-      } catch {
-        // Ignore individual errors
-      }
-    }
-  } catch {
-    // Ignore cleanup errors
-  }
-}
-
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
-
-export function startPeriodicCleanup(): void {
-  if (cleanupTimer) return;
-  cleanupStaleTempDirs();
-  cleanupTimer = setInterval(cleanupStaleTempDirs, CLEANUP_INTERVAL_MS);
 }
